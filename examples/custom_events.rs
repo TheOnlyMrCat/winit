@@ -1,7 +1,7 @@
 #![allow(clippy::single_match)]
 
 #[cfg(not(wasm_platform))]
-fn main() {
+fn main() -> Result<(), impl std::error::Error> {
     use simple_logger::SimpleLogger;
     use winit::{
         event::{Event, WindowEvent},
@@ -9,15 +9,20 @@ fn main() {
         window::WindowBuilder,
     };
 
+    #[path = "util/fill.rs"]
+    mod fill;
+
     #[derive(Debug, Clone, Copy)]
     enum CustomEvent {
         Timer,
     }
 
     SimpleLogger::new().init().unwrap();
-    let event_loop = EventLoopBuilder::<CustomEvent>::with_user_event().build();
+    let event_loop = EventLoopBuilder::<CustomEvent>::with_user_event()
+        .build()
+        .unwrap();
 
-    let _window = WindowBuilder::new()
+    let window = WindowBuilder::new()
         .with_title("A fantastic window!")
         .build(&event_loop)
         .unwrap();
@@ -35,18 +40,20 @@ fn main() {
         }
     });
 
-    event_loop.run(move |event, _, control_flow| {
-        control_flow.set_wait();
-
-        match event {
-            Event::UserEvent(event) => println!("user event: {event:?}"),
-            Event::WindowEvent {
-                event: WindowEvent::CloseRequested,
-                ..
-            } => control_flow.set_exit(),
-            _ => (),
+    event_loop.run(move |event, elwt| match event {
+        Event::UserEvent(event) => println!("user event: {event:?}"),
+        Event::WindowEvent {
+            event: WindowEvent::CloseRequested,
+            ..
+        } => elwt.exit(),
+        Event::WindowEvent {
+            event: WindowEvent::RedrawRequested,
+            ..
+        } => {
+            fill::fill_window(&window);
         }
-    });
+        _ => (),
+    })
 }
 
 #[cfg(wasm_platform)]

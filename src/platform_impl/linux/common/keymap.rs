@@ -1,18 +1,18 @@
 //! Convert XKB keys to Winit keys.
 
-use crate::keyboard::{Key, KeyCode, KeyLocation, NativeKey, NativeKeyCode};
+use crate::keyboard::{Key, KeyCode, KeyLocation, NamedKey, NativeKey, NativeKeyCode, PhysicalKey};
 
 /// Map the raw X11-style keycode to the `KeyCode` enum.
 ///
 /// X11-style keycodes are offset by 8 from the keycodes the Linux kernel uses.
-pub fn raw_keycode_to_keycode(keycode: u32) -> KeyCode {
-    scancode_to_keycode(keycode.saturating_sub(8))
+pub fn raw_keycode_to_physicalkey(keycode: u32) -> PhysicalKey {
+    scancode_to_physicalkey(keycode.saturating_sub(8))
 }
 
 /// Map the linux scancode to Keycode.
 ///
 /// Both X11 and Wayland use keys with `+ 8` offset to linux scancode.
-pub fn scancode_to_keycode(scancode: u32) -> KeyCode {
+pub fn scancode_to_physicalkey(scancode: u32) -> PhysicalKey {
     // The keycode values are taken from linux/include/uapi/linux/input-event-codes.h, as
     // libxkbcommon's documentation seems to suggest that the keycode values we're interested in
     // are defined by the Linux kernel. If Winit programs end up being run on other Unix-likes,
@@ -21,8 +21,8 @@ pub fn scancode_to_keycode(scancode: u32) -> KeyCode {
     // Some of the keycodes are likely superfluous for our purposes, and some are ones which are
     // difficult to test the correctness of, or discover the purpose of. Because of this, they've
     // either been commented out here, or not included at all.
-    match scancode {
-        0 => KeyCode::Unidentified(NativeKeyCode::Xkb(0)),
+    PhysicalKey::Code(match scancode {
+        0 => return PhysicalKey::Unidentified(NativeKeyCode::Xkb(0)),
         1 => KeyCode::Escape,
         2 => KeyCode::Digit1,
         3 => KeyCode::Digit2,
@@ -256,7 +256,7 @@ pub fn scancode_to_keycode(scancode: u32) -> KeyCode {
         // 237 => KeyCode::BLUETOOTH,
         // 238 => KeyCode::WLAN,
         // 239 => KeyCode::UWB,
-        240 => KeyCode::Unidentified(NativeKeyCode::Unidentified),
+        240 => return PhysicalKey::Unidentified(NativeKeyCode::Unidentified),
         // 241 => KeyCode::VIDEO_NEXT,
         // 242 => KeyCode::VIDEO_PREV,
         // 243 => KeyCode::BRIGHTNESS_CYCLE,
@@ -265,14 +265,23 @@ pub fn scancode_to_keycode(scancode: u32) -> KeyCode {
         // 246 => KeyCode::WWAN,
         // 247 => KeyCode::RFKILL,
         // 248 => KeyCode::KEY_MICMUTE,
-        _ => KeyCode::Unidentified(NativeKeyCode::Xkb(scancode)),
-    }
+        _ => return PhysicalKey::Unidentified(NativeKeyCode::Xkb(scancode)),
+    })
 }
 
-pub fn keycode_to_scancode(keycode: KeyCode) -> Option<u32> {
-    match keycode {
-        KeyCode::Unidentified(NativeKeyCode::Unidentified) => Some(240),
-        KeyCode::Unidentified(NativeKeyCode::Xkb(raw)) => Some(raw),
+pub fn physicalkey_to_scancode(key: PhysicalKey) -> Option<u32> {
+    let code = match key {
+        PhysicalKey::Code(code) => code,
+        PhysicalKey::Unidentified(code) => {
+            return match code {
+                NativeKeyCode::Unidentified => Some(240),
+                NativeKeyCode::Xkb(raw) => Some(raw),
+                _ => None,
+            };
+        }
+    };
+
+    match code {
         KeyCode::Escape => Some(1),
         KeyCode::Digit1 => Some(2),
         KeyCode::Digit2 => Some(3),
@@ -415,473 +424,473 @@ pub fn keycode_to_scancode(keycode: KeyCode) -> Option<u32> {
 
 pub fn keysym_to_key(keysym: u32) -> Key {
     use xkbcommon_dl::keysyms;
-    match keysym {
+    Key::Named(match keysym {
         // TTY function keys
-        keysyms::XKB_KEY_BackSpace => Key::Backspace,
-        keysyms::XKB_KEY_Tab => Key::Tab,
-        // keysyms::XKB_KEY_Linefeed => Key::Linefeed,
-        keysyms::XKB_KEY_Clear => Key::Clear,
-        keysyms::XKB_KEY_Return => Key::Enter,
-        keysyms::XKB_KEY_Pause => Key::Pause,
-        keysyms::XKB_KEY_Scroll_Lock => Key::ScrollLock,
-        keysyms::XKB_KEY_Sys_Req => Key::PrintScreen,
-        keysyms::XKB_KEY_Escape => Key::Escape,
-        keysyms::XKB_KEY_Delete => Key::Delete,
+        keysyms::BackSpace => NamedKey::Backspace,
+        keysyms::Tab => NamedKey::Tab,
+        // keysyms::Linefeed => NamedKey::Linefeed,
+        keysyms::Clear => NamedKey::Clear,
+        keysyms::Return => NamedKey::Enter,
+        keysyms::Pause => NamedKey::Pause,
+        keysyms::Scroll_Lock => NamedKey::ScrollLock,
+        keysyms::Sys_Req => NamedKey::PrintScreen,
+        keysyms::Escape => NamedKey::Escape,
+        keysyms::Delete => NamedKey::Delete,
 
         // IME keys
-        keysyms::XKB_KEY_Multi_key => Key::Compose,
-        keysyms::XKB_KEY_Codeinput => Key::CodeInput,
-        keysyms::XKB_KEY_SingleCandidate => Key::SingleCandidate,
-        keysyms::XKB_KEY_MultipleCandidate => Key::AllCandidates,
-        keysyms::XKB_KEY_PreviousCandidate => Key::PreviousCandidate,
+        keysyms::Multi_key => NamedKey::Compose,
+        keysyms::Codeinput => NamedKey::CodeInput,
+        keysyms::SingleCandidate => NamedKey::SingleCandidate,
+        keysyms::MultipleCandidate => NamedKey::AllCandidates,
+        keysyms::PreviousCandidate => NamedKey::PreviousCandidate,
 
         // Japanese keys
-        keysyms::XKB_KEY_Kanji => Key::KanjiMode,
-        keysyms::XKB_KEY_Muhenkan => Key::NonConvert,
-        keysyms::XKB_KEY_Henkan_Mode => Key::Convert,
-        keysyms::XKB_KEY_Romaji => Key::Romaji,
-        keysyms::XKB_KEY_Hiragana => Key::Hiragana,
-        keysyms::XKB_KEY_Hiragana_Katakana => Key::HiraganaKatakana,
-        keysyms::XKB_KEY_Zenkaku => Key::Zenkaku,
-        keysyms::XKB_KEY_Hankaku => Key::Hankaku,
-        keysyms::XKB_KEY_Zenkaku_Hankaku => Key::ZenkakuHankaku,
-        // keysyms::XKB_KEY_Touroku => Key::Touroku,
-        // keysyms::XKB_KEY_Massyo => Key::Massyo,
-        keysyms::XKB_KEY_Kana_Lock => Key::KanaMode,
-        keysyms::XKB_KEY_Kana_Shift => Key::KanaMode,
-        keysyms::XKB_KEY_Eisu_Shift => Key::Alphanumeric,
-        keysyms::XKB_KEY_Eisu_toggle => Key::Alphanumeric,
+        keysyms::Kanji => NamedKey::KanjiMode,
+        keysyms::Muhenkan => NamedKey::NonConvert,
+        keysyms::Henkan_Mode => NamedKey::Convert,
+        keysyms::Romaji => NamedKey::Romaji,
+        keysyms::Hiragana => NamedKey::Hiragana,
+        keysyms::Hiragana_Katakana => NamedKey::HiraganaKatakana,
+        keysyms::Zenkaku => NamedKey::Zenkaku,
+        keysyms::Hankaku => NamedKey::Hankaku,
+        keysyms::Zenkaku_Hankaku => NamedKey::ZenkakuHankaku,
+        // keysyms::Touroku => NamedKey::Touroku,
+        // keysyms::Massyo => NamedKey::Massyo,
+        keysyms::Kana_Lock => NamedKey::KanaMode,
+        keysyms::Kana_Shift => NamedKey::KanaMode,
+        keysyms::Eisu_Shift => NamedKey::Alphanumeric,
+        keysyms::Eisu_toggle => NamedKey::Alphanumeric,
         // NOTE: The next three items are aliases for values we've already mapped.
-        // keysyms::XKB_KEY_Kanji_Bangou => Key::CodeInput,
-        // keysyms::XKB_KEY_Zen_Koho => Key::AllCandidates,
-        // keysyms::XKB_KEY_Mae_Koho => Key::PreviousCandidate,
+        // keysyms::Kanji_Bangou => NamedKey::CodeInput,
+        // keysyms::Zen_Koho => NamedKey::AllCandidates,
+        // keysyms::Mae_Koho => NamedKey::PreviousCandidate,
 
         // Cursor control & motion
-        keysyms::XKB_KEY_Home => Key::Home,
-        keysyms::XKB_KEY_Left => Key::ArrowLeft,
-        keysyms::XKB_KEY_Up => Key::ArrowUp,
-        keysyms::XKB_KEY_Right => Key::ArrowRight,
-        keysyms::XKB_KEY_Down => Key::ArrowDown,
-        // keysyms::XKB_KEY_Prior => Key::PageUp,
-        keysyms::XKB_KEY_Page_Up => Key::PageUp,
-        // keysyms::XKB_KEY_Next => Key::PageDown,
-        keysyms::XKB_KEY_Page_Down => Key::PageDown,
-        keysyms::XKB_KEY_End => Key::End,
-        // keysyms::XKB_KEY_Begin => Key::Begin,
+        keysyms::Home => NamedKey::Home,
+        keysyms::Left => NamedKey::ArrowLeft,
+        keysyms::Up => NamedKey::ArrowUp,
+        keysyms::Right => NamedKey::ArrowRight,
+        keysyms::Down => NamedKey::ArrowDown,
+        // keysyms::Prior => NamedKey::PageUp,
+        keysyms::Page_Up => NamedKey::PageUp,
+        // keysyms::Next => NamedKey::PageDown,
+        keysyms::Page_Down => NamedKey::PageDown,
+        keysyms::End => NamedKey::End,
+        // keysyms::Begin => NamedKey::Begin,
 
         // Misc. functions
-        keysyms::XKB_KEY_Select => Key::Select,
-        keysyms::XKB_KEY_Print => Key::PrintScreen,
-        keysyms::XKB_KEY_Execute => Key::Execute,
-        keysyms::XKB_KEY_Insert => Key::Insert,
-        keysyms::XKB_KEY_Undo => Key::Undo,
-        keysyms::XKB_KEY_Redo => Key::Redo,
-        keysyms::XKB_KEY_Menu => Key::ContextMenu,
-        keysyms::XKB_KEY_Find => Key::Find,
-        keysyms::XKB_KEY_Cancel => Key::Cancel,
-        keysyms::XKB_KEY_Help => Key::Help,
-        keysyms::XKB_KEY_Break => Key::Pause,
-        keysyms::XKB_KEY_Mode_switch => Key::ModeChange,
-        // keysyms::XKB_KEY_script_switch => Key::ModeChange,
-        keysyms::XKB_KEY_Num_Lock => Key::NumLock,
+        keysyms::Select => NamedKey::Select,
+        keysyms::Print => NamedKey::PrintScreen,
+        keysyms::Execute => NamedKey::Execute,
+        keysyms::Insert => NamedKey::Insert,
+        keysyms::Undo => NamedKey::Undo,
+        keysyms::Redo => NamedKey::Redo,
+        keysyms::Menu => NamedKey::ContextMenu,
+        keysyms::Find => NamedKey::Find,
+        keysyms::Cancel => NamedKey::Cancel,
+        keysyms::Help => NamedKey::Help,
+        keysyms::Break => NamedKey::Pause,
+        keysyms::Mode_switch => NamedKey::ModeChange,
+        // keysyms::script_switch => NamedKey::ModeChange,
+        keysyms::Num_Lock => NamedKey::NumLock,
 
         // Keypad keys
-        // keysyms::XKB_KEY_KP_Space => Key::Character(" "),
-        keysyms::XKB_KEY_KP_Tab => Key::Tab,
-        keysyms::XKB_KEY_KP_Enter => Key::Enter,
-        keysyms::XKB_KEY_KP_F1 => Key::F1,
-        keysyms::XKB_KEY_KP_F2 => Key::F2,
-        keysyms::XKB_KEY_KP_F3 => Key::F3,
-        keysyms::XKB_KEY_KP_F4 => Key::F4,
-        keysyms::XKB_KEY_KP_Home => Key::Home,
-        keysyms::XKB_KEY_KP_Left => Key::ArrowLeft,
-        keysyms::XKB_KEY_KP_Up => Key::ArrowLeft,
-        keysyms::XKB_KEY_KP_Right => Key::ArrowRight,
-        keysyms::XKB_KEY_KP_Down => Key::ArrowDown,
-        // keysyms::XKB_KEY_KP_Prior => Key::PageUp,
-        keysyms::XKB_KEY_KP_Page_Up => Key::PageUp,
-        // keysyms::XKB_KEY_KP_Next => Key::PageDown,
-        keysyms::XKB_KEY_KP_Page_Down => Key::PageDown,
-        keysyms::XKB_KEY_KP_End => Key::End,
+        // keysyms::KP_Space => return Key::Character(" "),
+        keysyms::KP_Tab => NamedKey::Tab,
+        keysyms::KP_Enter => NamedKey::Enter,
+        keysyms::KP_F1 => NamedKey::F1,
+        keysyms::KP_F2 => NamedKey::F2,
+        keysyms::KP_F3 => NamedKey::F3,
+        keysyms::KP_F4 => NamedKey::F4,
+        keysyms::KP_Home => NamedKey::Home,
+        keysyms::KP_Left => NamedKey::ArrowLeft,
+        keysyms::KP_Up => NamedKey::ArrowUp,
+        keysyms::KP_Right => NamedKey::ArrowRight,
+        keysyms::KP_Down => NamedKey::ArrowDown,
+        // keysyms::KP_Prior => NamedKey::PageUp,
+        keysyms::KP_Page_Up => NamedKey::PageUp,
+        // keysyms::KP_Next => NamedKey::PageDown,
+        keysyms::KP_Page_Down => NamedKey::PageDown,
+        keysyms::KP_End => NamedKey::End,
         // This is the key labeled "5" on the numpad when NumLock is off.
-        // keysyms::XKB_KEY_KP_Begin => Key::Begin,
-        keysyms::XKB_KEY_KP_Insert => Key::Insert,
-        keysyms::XKB_KEY_KP_Delete => Key::Delete,
-        // keysyms::XKB_KEY_KP_Equal => Key::Equal,
-        // keysyms::XKB_KEY_KP_Multiply => Key::Multiply,
-        // keysyms::XKB_KEY_KP_Add => Key::Add,
-        // keysyms::XKB_KEY_KP_Separator => Key::Separator,
-        // keysyms::XKB_KEY_KP_Subtract => Key::Subtract,
-        // keysyms::XKB_KEY_KP_Decimal => Key::Decimal,
-        // keysyms::XKB_KEY_KP_Divide => Key::Divide,
+        // keysyms::KP_Begin => NamedKey::Begin,
+        keysyms::KP_Insert => NamedKey::Insert,
+        keysyms::KP_Delete => NamedKey::Delete,
+        // keysyms::KP_Equal => NamedKey::Equal,
+        // keysyms::KP_Multiply => NamedKey::Multiply,
+        // keysyms::KP_Add => NamedKey::Add,
+        // keysyms::KP_Separator => NamedKey::Separator,
+        // keysyms::KP_Subtract => NamedKey::Subtract,
+        // keysyms::KP_Decimal => NamedKey::Decimal,
+        // keysyms::KP_Divide => NamedKey::Divide,
 
-        // keysyms::XKB_KEY_KP_0 => Key::Character("0"),
-        // keysyms::XKB_KEY_KP_1 => Key::Character("1"),
-        // keysyms::XKB_KEY_KP_2 => Key::Character("2"),
-        // keysyms::XKB_KEY_KP_3 => Key::Character("3"),
-        // keysyms::XKB_KEY_KP_4 => Key::Character("4"),
-        // keysyms::XKB_KEY_KP_5 => Key::Character("5"),
-        // keysyms::XKB_KEY_KP_6 => Key::Character("6"),
-        // keysyms::XKB_KEY_KP_7 => Key::Character("7"),
-        // keysyms::XKB_KEY_KP_8 => Key::Character("8"),
-        // keysyms::XKB_KEY_KP_9 => Key::Character("9"),
+        // keysyms::KP_0 => return Key::Character("0"),
+        // keysyms::KP_1 => return Key::Character("1"),
+        // keysyms::KP_2 => return Key::Character("2"),
+        // keysyms::KP_3 => return Key::Character("3"),
+        // keysyms::KP_4 => return Key::Character("4"),
+        // keysyms::KP_5 => return Key::Character("5"),
+        // keysyms::KP_6 => return Key::Character("6"),
+        // keysyms::KP_7 => return Key::Character("7"),
+        // keysyms::KP_8 => return Key::Character("8"),
+        // keysyms::KP_9 => return Key::Character("9"),
 
         // Function keys
-        keysyms::XKB_KEY_F1 => Key::F1,
-        keysyms::XKB_KEY_F2 => Key::F2,
-        keysyms::XKB_KEY_F3 => Key::F3,
-        keysyms::XKB_KEY_F4 => Key::F4,
-        keysyms::XKB_KEY_F5 => Key::F5,
-        keysyms::XKB_KEY_F6 => Key::F6,
-        keysyms::XKB_KEY_F7 => Key::F7,
-        keysyms::XKB_KEY_F8 => Key::F8,
-        keysyms::XKB_KEY_F9 => Key::F9,
-        keysyms::XKB_KEY_F10 => Key::F10,
-        keysyms::XKB_KEY_F11 => Key::F11,
-        keysyms::XKB_KEY_F12 => Key::F12,
-        keysyms::XKB_KEY_F13 => Key::F13,
-        keysyms::XKB_KEY_F14 => Key::F14,
-        keysyms::XKB_KEY_F15 => Key::F15,
-        keysyms::XKB_KEY_F16 => Key::F16,
-        keysyms::XKB_KEY_F17 => Key::F17,
-        keysyms::XKB_KEY_F18 => Key::F18,
-        keysyms::XKB_KEY_F19 => Key::F19,
-        keysyms::XKB_KEY_F20 => Key::F20,
-        keysyms::XKB_KEY_F21 => Key::F21,
-        keysyms::XKB_KEY_F22 => Key::F22,
-        keysyms::XKB_KEY_F23 => Key::F23,
-        keysyms::XKB_KEY_F24 => Key::F24,
-        keysyms::XKB_KEY_F25 => Key::F25,
-        keysyms::XKB_KEY_F26 => Key::F26,
-        keysyms::XKB_KEY_F27 => Key::F27,
-        keysyms::XKB_KEY_F28 => Key::F28,
-        keysyms::XKB_KEY_F29 => Key::F29,
-        keysyms::XKB_KEY_F30 => Key::F30,
-        keysyms::XKB_KEY_F31 => Key::F31,
-        keysyms::XKB_KEY_F32 => Key::F32,
-        keysyms::XKB_KEY_F33 => Key::F33,
-        keysyms::XKB_KEY_F34 => Key::F34,
-        keysyms::XKB_KEY_F35 => Key::F35,
+        keysyms::F1 => NamedKey::F1,
+        keysyms::F2 => NamedKey::F2,
+        keysyms::F3 => NamedKey::F3,
+        keysyms::F4 => NamedKey::F4,
+        keysyms::F5 => NamedKey::F5,
+        keysyms::F6 => NamedKey::F6,
+        keysyms::F7 => NamedKey::F7,
+        keysyms::F8 => NamedKey::F8,
+        keysyms::F9 => NamedKey::F9,
+        keysyms::F10 => NamedKey::F10,
+        keysyms::F11 => NamedKey::F11,
+        keysyms::F12 => NamedKey::F12,
+        keysyms::F13 => NamedKey::F13,
+        keysyms::F14 => NamedKey::F14,
+        keysyms::F15 => NamedKey::F15,
+        keysyms::F16 => NamedKey::F16,
+        keysyms::F17 => NamedKey::F17,
+        keysyms::F18 => NamedKey::F18,
+        keysyms::F19 => NamedKey::F19,
+        keysyms::F20 => NamedKey::F20,
+        keysyms::F21 => NamedKey::F21,
+        keysyms::F22 => NamedKey::F22,
+        keysyms::F23 => NamedKey::F23,
+        keysyms::F24 => NamedKey::F24,
+        keysyms::F25 => NamedKey::F25,
+        keysyms::F26 => NamedKey::F26,
+        keysyms::F27 => NamedKey::F27,
+        keysyms::F28 => NamedKey::F28,
+        keysyms::F29 => NamedKey::F29,
+        keysyms::F30 => NamedKey::F30,
+        keysyms::F31 => NamedKey::F31,
+        keysyms::F32 => NamedKey::F32,
+        keysyms::F33 => NamedKey::F33,
+        keysyms::F34 => NamedKey::F34,
+        keysyms::F35 => NamedKey::F35,
 
         // Modifiers
-        keysyms::XKB_KEY_Shift_L => Key::Shift,
-        keysyms::XKB_KEY_Shift_R => Key::Shift,
-        keysyms::XKB_KEY_Control_L => Key::Control,
-        keysyms::XKB_KEY_Control_R => Key::Control,
-        keysyms::XKB_KEY_Caps_Lock => Key::CapsLock,
-        // keysyms::XKB_KEY_Shift_Lock => Key::ShiftLock,
+        keysyms::Shift_L => NamedKey::Shift,
+        keysyms::Shift_R => NamedKey::Shift,
+        keysyms::Control_L => NamedKey::Control,
+        keysyms::Control_R => NamedKey::Control,
+        keysyms::Caps_Lock => NamedKey::CapsLock,
+        // keysyms::Shift_Lock => NamedKey::ShiftLock,
 
-        // keysyms::XKB_KEY_Meta_L => Key::Meta,
-        // keysyms::XKB_KEY_Meta_R => Key::Meta,
-        keysyms::XKB_KEY_Alt_L => Key::Alt,
-        keysyms::XKB_KEY_Alt_R => Key::Alt,
-        keysyms::XKB_KEY_Super_L => Key::Super,
-        keysyms::XKB_KEY_Super_R => Key::Super,
-        keysyms::XKB_KEY_Hyper_L => Key::Hyper,
-        keysyms::XKB_KEY_Hyper_R => Key::Hyper,
+        // keysyms::Meta_L => NamedKey::Meta,
+        // keysyms::Meta_R => NamedKey::Meta,
+        keysyms::Alt_L => NamedKey::Alt,
+        keysyms::Alt_R => NamedKey::Alt,
+        keysyms::Super_L => NamedKey::Super,
+        keysyms::Super_R => NamedKey::Super,
+        keysyms::Hyper_L => NamedKey::Hyper,
+        keysyms::Hyper_R => NamedKey::Hyper,
 
         // XKB function and modifier keys
-        // keysyms::XKB_KEY_ISO_Lock => Key::IsoLock,
-        // keysyms::XKB_KEY_ISO_Level2_Latch => Key::IsoLevel2Latch,
-        keysyms::XKB_KEY_ISO_Level3_Shift => Key::AltGraph,
-        keysyms::XKB_KEY_ISO_Level3_Latch => Key::AltGraph,
-        keysyms::XKB_KEY_ISO_Level3_Lock => Key::AltGraph,
-        // keysyms::XKB_KEY_ISO_Level5_Shift => Key::IsoLevel5Shift,
-        // keysyms::XKB_KEY_ISO_Level5_Latch => Key::IsoLevel5Latch,
-        // keysyms::XKB_KEY_ISO_Level5_Lock => Key::IsoLevel5Lock,
-        // keysyms::XKB_KEY_ISO_Group_Shift => Key::IsoGroupShift,
-        // keysyms::XKB_KEY_ISO_Group_Latch => Key::IsoGroupLatch,
-        // keysyms::XKB_KEY_ISO_Group_Lock => Key::IsoGroupLock,
-        keysyms::XKB_KEY_ISO_Next_Group => Key::GroupNext,
-        // keysyms::XKB_KEY_ISO_Next_Group_Lock => Key::GroupNextLock,
-        keysyms::XKB_KEY_ISO_Prev_Group => Key::GroupPrevious,
-        // keysyms::XKB_KEY_ISO_Prev_Group_Lock => Key::GroupPreviousLock,
-        keysyms::XKB_KEY_ISO_First_Group => Key::GroupFirst,
-        // keysyms::XKB_KEY_ISO_First_Group_Lock => Key::GroupFirstLock,
-        keysyms::XKB_KEY_ISO_Last_Group => Key::GroupLast,
-        // keysyms::XKB_KEY_ISO_Last_Group_Lock => Key::GroupLastLock,
+        // keysyms::ISO_Lock => NamedKey::IsoLock,
+        // keysyms::ISO_Level2_Latch => NamedKey::IsoLevel2Latch,
+        keysyms::ISO_Level3_Shift => NamedKey::AltGraph,
+        keysyms::ISO_Level3_Latch => NamedKey::AltGraph,
+        keysyms::ISO_Level3_Lock => NamedKey::AltGraph,
+        // keysyms::ISO_Level5_Shift => NamedKey::IsoLevel5Shift,
+        // keysyms::ISO_Level5_Latch => NamedKey::IsoLevel5Latch,
+        // keysyms::ISO_Level5_Lock => NamedKey::IsoLevel5Lock,
+        // keysyms::ISO_Group_Shift => NamedKey::IsoGroupShift,
+        // keysyms::ISO_Group_Latch => NamedKey::IsoGroupLatch,
+        // keysyms::ISO_Group_Lock => NamedKey::IsoGroupLock,
+        keysyms::ISO_Next_Group => NamedKey::GroupNext,
+        // keysyms::ISO_Next_Group_Lock => NamedKey::GroupNextLock,
+        keysyms::ISO_Prev_Group => NamedKey::GroupPrevious,
+        // keysyms::ISO_Prev_Group_Lock => NamedKey::GroupPreviousLock,
+        keysyms::ISO_First_Group => NamedKey::GroupFirst,
+        // keysyms::ISO_First_Group_Lock => NamedKey::GroupFirstLock,
+        keysyms::ISO_Last_Group => NamedKey::GroupLast,
+        // keysyms::ISO_Last_Group_Lock => NamedKey::GroupLastLock,
         //
-        keysyms::XKB_KEY_ISO_Left_Tab => Key::Tab,
-        // keysyms::XKB_KEY_ISO_Move_Line_Up => Key::IsoMoveLineUp,
-        // keysyms::XKB_KEY_ISO_Move_Line_Down => Key::IsoMoveLineDown,
-        // keysyms::XKB_KEY_ISO_Partial_Line_Up => Key::IsoPartialLineUp,
-        // keysyms::XKB_KEY_ISO_Partial_Line_Down => Key::IsoPartialLineDown,
-        // keysyms::XKB_KEY_ISO_Partial_Space_Left => Key::IsoPartialSpaceLeft,
-        // keysyms::XKB_KEY_ISO_Partial_Space_Right => Key::IsoPartialSpaceRight,
-        // keysyms::XKB_KEY_ISO_Set_Margin_Left => Key::IsoSetMarginLeft,
-        // keysyms::XKB_KEY_ISO_Set_Margin_Right => Key::IsoSetMarginRight,
-        // keysyms::XKB_KEY_ISO_Release_Margin_Left => Key::IsoReleaseMarginLeft,
-        // keysyms::XKB_KEY_ISO_Release_Margin_Right => Key::IsoReleaseMarginRight,
-        // keysyms::XKB_KEY_ISO_Release_Both_Margins => Key::IsoReleaseBothMargins,
-        // keysyms::XKB_KEY_ISO_Fast_Cursor_Left => Key::IsoFastCursorLeft,
-        // keysyms::XKB_KEY_ISO_Fast_Cursor_Right => Key::IsoFastCursorRight,
-        // keysyms::XKB_KEY_ISO_Fast_Cursor_Up => Key::IsoFastCursorUp,
-        // keysyms::XKB_KEY_ISO_Fast_Cursor_Down => Key::IsoFastCursorDown,
-        // keysyms::XKB_KEY_ISO_Continuous_Underline => Key::IsoContinuousUnderline,
-        // keysyms::XKB_KEY_ISO_Discontinuous_Underline => Key::IsoDiscontinuousUnderline,
-        // keysyms::XKB_KEY_ISO_Emphasize => Key::IsoEmphasize,
-        // keysyms::XKB_KEY_ISO_Center_Object => Key::IsoCenterObject,
-        keysyms::XKB_KEY_ISO_Enter => Key::Enter,
+        keysyms::ISO_Left_Tab => NamedKey::Tab,
+        // keysyms::ISO_Move_Line_Up => NamedKey::IsoMoveLineUp,
+        // keysyms::ISO_Move_Line_Down => NamedKey::IsoMoveLineDown,
+        // keysyms::ISO_Partial_Line_Up => NamedKey::IsoPartialLineUp,
+        // keysyms::ISO_Partial_Line_Down => NamedKey::IsoPartialLineDown,
+        // keysyms::ISO_Partial_Space_Left => NamedKey::IsoPartialSpaceLeft,
+        // keysyms::ISO_Partial_Space_Right => NamedKey::IsoPartialSpaceRight,
+        // keysyms::ISO_Set_Margin_Left => NamedKey::IsoSetMarginLeft,
+        // keysyms::ISO_Set_Margin_Right => NamedKey::IsoSetMarginRight,
+        // keysyms::ISO_Release_Margin_Left => NamedKey::IsoReleaseMarginLeft,
+        // keysyms::ISO_Release_Margin_Right => NamedKey::IsoReleaseMarginRight,
+        // keysyms::ISO_Release_Both_Margins => NamedKey::IsoReleaseBothMargins,
+        // keysyms::ISO_Fast_Cursor_Left => NamedKey::IsoFastCursorLeft,
+        // keysyms::ISO_Fast_Cursor_Right => NamedKey::IsoFastCursorRight,
+        // keysyms::ISO_Fast_Cursor_Up => NamedKey::IsoFastCursorUp,
+        // keysyms::ISO_Fast_Cursor_Down => NamedKey::IsoFastCursorDown,
+        // keysyms::ISO_Continuous_Underline => NamedKey::IsoContinuousUnderline,
+        // keysyms::ISO_Discontinuous_Underline => NamedKey::IsoDiscontinuousUnderline,
+        // keysyms::ISO_Emphasize => NamedKey::IsoEmphasize,
+        // keysyms::ISO_Center_Object => NamedKey::IsoCenterObject,
+        keysyms::ISO_Enter => NamedKey::Enter,
 
-        // XKB_KEY_dead_grave..XKB_KEY_dead_currency
+        // dead_grave..dead_currency
 
-        // XKB_KEY_dead_lowline..XKB_KEY_dead_longsolidusoverlay
+        // dead_lowline..dead_longsolidusoverlay
 
-        // XKB_KEY_dead_a..XKB_KEY_dead_capital_schwa
+        // dead_a..dead_capital_schwa
 
-        // XKB_KEY_dead_greek
+        // dead_greek
 
-        // XKB_KEY_First_Virtual_Screen..XKB_KEY_Terminate_Server
+        // First_Virtual_Screen..Terminate_Server
 
-        // XKB_KEY_AccessX_Enable..XKB_KEY_AudibleBell_Enable
+        // AccessX_Enable..AudibleBell_Enable
 
-        // XKB_KEY_Pointer_Left..XKB_KEY_Pointer_Drag5
+        // Pointer_Left..Pointer_Drag5
 
-        // XKB_KEY_Pointer_EnableKeys..XKB_KEY_Pointer_DfltBtnPrev
+        // Pointer_EnableKeys..Pointer_DfltBtnPrev
 
-        // XKB_KEY_ch..XKB_KEY_C_H
+        // ch..C_H
 
         // 3270 terminal keys
-        // keysyms::XKB_KEY_3270_Duplicate => Key::Duplicate,
-        // keysyms::XKB_KEY_3270_FieldMark => Key::FieldMark,
-        // keysyms::XKB_KEY_3270_Right2 => Key::Right2,
-        // keysyms::XKB_KEY_3270_Left2 => Key::Left2,
-        // keysyms::XKB_KEY_3270_BackTab => Key::BackTab,
-        keysyms::XKB_KEY_3270_EraseEOF => Key::EraseEof,
-        // keysyms::XKB_KEY_3270_EraseInput => Key::EraseInput,
-        // keysyms::XKB_KEY_3270_Reset => Key::Reset,
-        // keysyms::XKB_KEY_3270_Quit => Key::Quit,
-        // keysyms::XKB_KEY_3270_PA1 => Key::Pa1,
-        // keysyms::XKB_KEY_3270_PA2 => Key::Pa2,
-        // keysyms::XKB_KEY_3270_PA3 => Key::Pa3,
-        // keysyms::XKB_KEY_3270_Test => Key::Test,
-        keysyms::XKB_KEY_3270_Attn => Key::Attn,
-        // keysyms::XKB_KEY_3270_CursorBlink => Key::CursorBlink,
-        // keysyms::XKB_KEY_3270_AltCursor => Key::AltCursor,
-        // keysyms::XKB_KEY_3270_KeyClick => Key::KeyClick,
-        // keysyms::XKB_KEY_3270_Jump => Key::Jump,
-        // keysyms::XKB_KEY_3270_Ident => Key::Ident,
-        // keysyms::XKB_KEY_3270_Rule => Key::Rule,
-        // keysyms::XKB_KEY_3270_Copy => Key::Copy,
-        keysyms::XKB_KEY_3270_Play => Key::Play,
-        // keysyms::XKB_KEY_3270_Setup => Key::Setup,
-        // keysyms::XKB_KEY_3270_Record => Key::Record,
-        // keysyms::XKB_KEY_3270_ChangeScreen => Key::ChangeScreen,
-        // keysyms::XKB_KEY_3270_DeleteWord => Key::DeleteWord,
-        keysyms::XKB_KEY_3270_ExSelect => Key::ExSel,
-        keysyms::XKB_KEY_3270_CursorSelect => Key::CrSel,
-        keysyms::XKB_KEY_3270_PrintScreen => Key::PrintScreen,
-        keysyms::XKB_KEY_3270_Enter => Key::Enter,
+        // keysyms::3270_Duplicate => NamedKey::Duplicate,
+        // keysyms::3270_FieldMark => NamedKey::FieldMark,
+        // keysyms::3270_Right2 => NamedKey::Right2,
+        // keysyms::3270_Left2 => NamedKey::Left2,
+        // keysyms::3270_BackTab => NamedKey::BackTab,
+        keysyms::_3270_EraseEOF => NamedKey::EraseEof,
+        // keysyms::3270_EraseInput => NamedKey::EraseInput,
+        // keysyms::3270_Reset => NamedKey::Reset,
+        // keysyms::3270_Quit => NamedKey::Quit,
+        // keysyms::3270_PA1 => NamedKey::Pa1,
+        // keysyms::3270_PA2 => NamedKey::Pa2,
+        // keysyms::3270_PA3 => NamedKey::Pa3,
+        // keysyms::3270_Test => NamedKey::Test,
+        keysyms::_3270_Attn => NamedKey::Attn,
+        // keysyms::3270_CursorBlink => NamedKey::CursorBlink,
+        // keysyms::3270_AltCursor => NamedKey::AltCursor,
+        // keysyms::3270_KeyClick => NamedKey::KeyClick,
+        // keysyms::3270_Jump => NamedKey::Jump,
+        // keysyms::3270_Ident => NamedKey::Ident,
+        // keysyms::3270_Rule => NamedKey::Rule,
+        // keysyms::3270_Copy => NamedKey::Copy,
+        keysyms::_3270_Play => NamedKey::Play,
+        // keysyms::3270_Setup => NamedKey::Setup,
+        // keysyms::3270_Record => NamedKey::Record,
+        // keysyms::3270_ChangeScreen => NamedKey::ChangeScreen,
+        // keysyms::3270_DeleteWord => NamedKey::DeleteWord,
+        keysyms::_3270_ExSelect => NamedKey::ExSel,
+        keysyms::_3270_CursorSelect => NamedKey::CrSel,
+        keysyms::_3270_PrintScreen => NamedKey::PrintScreen,
+        keysyms::_3270_Enter => NamedKey::Enter,
 
-        keysyms::XKB_KEY_space => Key::Space,
-        // XKB_KEY_exclam..XKB_KEY_Sinh_kunddaliya
+        keysyms::space => NamedKey::Space,
+        // exclam..Sinh_kunddaliya
 
         // XFree86
-        // keysyms::XKB_KEY_XF86ModeLock => Key::ModeLock,
+        // keysyms::XF86_ModeLock => NamedKey::ModeLock,
 
         // XFree86 - Backlight controls
-        keysyms::XKB_KEY_XF86MonBrightnessUp => Key::BrightnessUp,
-        keysyms::XKB_KEY_XF86MonBrightnessDown => Key::BrightnessDown,
-        // keysyms::XKB_KEY_XF86KbdLightOnOff => Key::LightOnOff,
-        // keysyms::XKB_KEY_XF86KbdBrightnessUp => Key::KeyboardBrightnessUp,
-        // keysyms::XKB_KEY_XF86KbdBrightnessDown => Key::KeyboardBrightnessDown,
+        keysyms::XF86_MonBrightnessUp => NamedKey::BrightnessUp,
+        keysyms::XF86_MonBrightnessDown => NamedKey::BrightnessDown,
+        // keysyms::XF86_KbdLightOnOff => NamedKey::LightOnOff,
+        // keysyms::XF86_KbdBrightnessUp => NamedKey::KeyboardBrightnessUp,
+        // keysyms::XF86_KbdBrightnessDown => NamedKey::KeyboardBrightnessDown,
 
         // XFree86 - "Internet"
-        keysyms::XKB_KEY_XF86Standby => Key::Standby,
-        keysyms::XKB_KEY_XF86AudioLowerVolume => Key::AudioVolumeDown,
-        keysyms::XKB_KEY_XF86AudioRaiseVolume => Key::AudioVolumeUp,
-        keysyms::XKB_KEY_XF86AudioPlay => Key::MediaPlay,
-        keysyms::XKB_KEY_XF86AudioStop => Key::MediaStop,
-        keysyms::XKB_KEY_XF86AudioPrev => Key::MediaTrackPrevious,
-        keysyms::XKB_KEY_XF86AudioNext => Key::MediaTrackNext,
-        keysyms::XKB_KEY_XF86HomePage => Key::BrowserHome,
-        keysyms::XKB_KEY_XF86Mail => Key::LaunchMail,
-        // keysyms::XKB_KEY_XF86Start => Key::Start,
-        keysyms::XKB_KEY_XF86Search => Key::BrowserSearch,
-        keysyms::XKB_KEY_XF86AudioRecord => Key::MediaRecord,
+        keysyms::XF86_Standby => NamedKey::Standby,
+        keysyms::XF86_AudioLowerVolume => NamedKey::AudioVolumeDown,
+        keysyms::XF86_AudioRaiseVolume => NamedKey::AudioVolumeUp,
+        keysyms::XF86_AudioPlay => NamedKey::MediaPlay,
+        keysyms::XF86_AudioStop => NamedKey::MediaStop,
+        keysyms::XF86_AudioPrev => NamedKey::MediaTrackPrevious,
+        keysyms::XF86_AudioNext => NamedKey::MediaTrackNext,
+        keysyms::XF86_HomePage => NamedKey::BrowserHome,
+        keysyms::XF86_Mail => NamedKey::LaunchMail,
+        // keysyms::XF86_Start => NamedKey::Start,
+        keysyms::XF86_Search => NamedKey::BrowserSearch,
+        keysyms::XF86_AudioRecord => NamedKey::MediaRecord,
 
         // XFree86 - PDA
-        keysyms::XKB_KEY_XF86Calculator => Key::LaunchApplication2,
-        // keysyms::XKB_KEY_XF86Memo => Key::Memo,
-        // keysyms::XKB_KEY_XF86ToDoList => Key::ToDoList,
-        keysyms::XKB_KEY_XF86Calendar => Key::LaunchCalendar,
-        keysyms::XKB_KEY_XF86PowerDown => Key::Power,
-        // keysyms::XKB_KEY_XF86ContrastAdjust => Key::AdjustContrast,
-        // keysyms::XKB_KEY_XF86RockerUp => Key::RockerUp,
-        // keysyms::XKB_KEY_XF86RockerDown => Key::RockerDown,
-        // keysyms::XKB_KEY_XF86RockerEnter => Key::RockerEnter,
+        keysyms::XF86_Calculator => NamedKey::LaunchApplication2,
+        // keysyms::XF86_Memo => NamedKey::Memo,
+        // keysyms::XF86_ToDoList => NamedKey::ToDoList,
+        keysyms::XF86_Calendar => NamedKey::LaunchCalendar,
+        keysyms::XF86_PowerDown => NamedKey::Power,
+        // keysyms::XF86_ContrastAdjust => NamedKey::AdjustContrast,
+        // keysyms::XF86_RockerUp => NamedKey::RockerUp,
+        // keysyms::XF86_RockerDown => NamedKey::RockerDown,
+        // keysyms::XF86_RockerEnter => NamedKey::RockerEnter,
 
         // XFree86 - More "Internet"
-        keysyms::XKB_KEY_XF86Back => Key::BrowserBack,
-        keysyms::XKB_KEY_XF86Forward => Key::BrowserForward,
-        // keysyms::XKB_KEY_XF86Stop => Key::Stop,
-        keysyms::XKB_KEY_XF86Refresh => Key::BrowserRefresh,
-        keysyms::XKB_KEY_XF86PowerOff => Key::Power,
-        keysyms::XKB_KEY_XF86WakeUp => Key::WakeUp,
-        keysyms::XKB_KEY_XF86Eject => Key::Eject,
-        keysyms::XKB_KEY_XF86ScreenSaver => Key::LaunchScreenSaver,
-        keysyms::XKB_KEY_XF86WWW => Key::LaunchWebBrowser,
-        keysyms::XKB_KEY_XF86Sleep => Key::Standby,
-        keysyms::XKB_KEY_XF86Favorites => Key::BrowserFavorites,
-        keysyms::XKB_KEY_XF86AudioPause => Key::MediaPause,
-        // keysyms::XKB_KEY_XF86AudioMedia => Key::AudioMedia,
-        keysyms::XKB_KEY_XF86MyComputer => Key::LaunchApplication1,
-        // keysyms::XKB_KEY_XF86VendorHome => Key::VendorHome,
-        // keysyms::XKB_KEY_XF86LightBulb => Key::LightBulb,
-        // keysyms::XKB_KEY_XF86Shop => Key::BrowserShop,
-        // keysyms::XKB_KEY_XF86History => Key::BrowserHistory,
-        // keysyms::XKB_KEY_XF86OpenURL => Key::OpenUrl,
-        // keysyms::XKB_KEY_XF86AddFavorite => Key::AddFavorite,
-        // keysyms::XKB_KEY_XF86HotLinks => Key::HotLinks,
-        // keysyms::XKB_KEY_XF86BrightnessAdjust => Key::BrightnessAdjust,
-        // keysyms::XKB_KEY_XF86Finance => Key::BrowserFinance,
-        // keysyms::XKB_KEY_XF86Community => Key::BrowserCommunity,
-        keysyms::XKB_KEY_XF86AudioRewind => Key::MediaRewind,
-        // keysyms::XKB_KEY_XF86BackForward => Key::???,
-        // XKB_KEY_XF86Launch0..XKB_KEY_XF86LaunchF
+        keysyms::XF86_Back => NamedKey::BrowserBack,
+        keysyms::XF86_Forward => NamedKey::BrowserForward,
+        // keysyms::XF86_Stop => NamedKey::Stop,
+        keysyms::XF86_Refresh => NamedKey::BrowserRefresh,
+        keysyms::XF86_PowerOff => NamedKey::Power,
+        keysyms::XF86_WakeUp => NamedKey::WakeUp,
+        keysyms::XF86_Eject => NamedKey::Eject,
+        keysyms::XF86_ScreenSaver => NamedKey::LaunchScreenSaver,
+        keysyms::XF86_WWW => NamedKey::LaunchWebBrowser,
+        keysyms::XF86_Sleep => NamedKey::Standby,
+        keysyms::XF86_Favorites => NamedKey::BrowserFavorites,
+        keysyms::XF86_AudioPause => NamedKey::MediaPause,
+        // keysyms::XF86_AudioMedia => NamedKey::AudioMedia,
+        keysyms::XF86_MyComputer => NamedKey::LaunchApplication1,
+        // keysyms::XF86_VendorHome => NamedKey::VendorHome,
+        // keysyms::XF86_LightBulb => NamedKey::LightBulb,
+        // keysyms::XF86_Shop => NamedKey::BrowserShop,
+        // keysyms::XF86_History => NamedKey::BrowserHistory,
+        // keysyms::XF86_OpenURL => NamedKey::OpenUrl,
+        // keysyms::XF86_AddFavorite => NamedKey::AddFavorite,
+        // keysyms::XF86_HotLinks => NamedKey::HotLinks,
+        // keysyms::XF86_BrightnessAdjust => NamedKey::BrightnessAdjust,
+        // keysyms::XF86_Finance => NamedKey::BrowserFinance,
+        // keysyms::XF86_Community => NamedKey::BrowserCommunity,
+        keysyms::XF86_AudioRewind => NamedKey::MediaRewind,
+        // keysyms::XF86_BackForward => Key::???,
+        // XF86_Launch0..XF86_LaunchF
 
-        // XKB_KEY_XF86ApplicationLeft..XKB_KEY_XF86CD
-        keysyms::XKB_KEY_XF86Calculater => Key::LaunchApplication2, // Nice typo, libxkbcommon :)
-        // XKB_KEY_XF86Clear
-        keysyms::XKB_KEY_XF86Close => Key::Close,
-        keysyms::XKB_KEY_XF86Copy => Key::Copy,
-        keysyms::XKB_KEY_XF86Cut => Key::Cut,
-        // XKB_KEY_XF86Display..XKB_KEY_XF86Documents
-        keysyms::XKB_KEY_XF86Excel => Key::LaunchSpreadsheet,
-        // XKB_KEY_XF86Explorer..XKB_KEY_XF86iTouch
-        keysyms::XKB_KEY_XF86LogOff => Key::LogOff,
-        // XKB_KEY_XF86Market..XKB_KEY_XF86MenuPB
-        keysyms::XKB_KEY_XF86MySites => Key::BrowserFavorites,
-        keysyms::XKB_KEY_XF86New => Key::New,
-        // XKB_KEY_XF86News..XKB_KEY_XF86OfficeHome
-        keysyms::XKB_KEY_XF86Open => Key::Open,
-        // XKB_KEY_XF86Option
-        keysyms::XKB_KEY_XF86Paste => Key::Paste,
-        keysyms::XKB_KEY_XF86Phone => Key::LaunchPhone,
-        // XKB_KEY_XF86Q
-        keysyms::XKB_KEY_XF86Reply => Key::MailReply,
-        keysyms::XKB_KEY_XF86Reload => Key::BrowserRefresh,
-        // XKB_KEY_XF86RotateWindows..XKB_KEY_XF86RotationKB
-        keysyms::XKB_KEY_XF86Save => Key::Save,
-        // XKB_KEY_XF86ScrollUp..XKB_KEY_XF86ScrollClick
-        keysyms::XKB_KEY_XF86Send => Key::MailSend,
-        keysyms::XKB_KEY_XF86Spell => Key::SpellCheck,
-        keysyms::XKB_KEY_XF86SplitScreen => Key::SplitScreenToggle,
-        // XKB_KEY_XF86Support..XKB_KEY_XF86User2KB
-        keysyms::XKB_KEY_XF86Video => Key::LaunchMediaPlayer,
-        // XKB_KEY_XF86WheelButton
-        keysyms::XKB_KEY_XF86Word => Key::LaunchWordProcessor,
-        // XKB_KEY_XF86Xfer
-        keysyms::XKB_KEY_XF86ZoomIn => Key::ZoomIn,
-        keysyms::XKB_KEY_XF86ZoomOut => Key::ZoomOut,
+        // XF86_ApplicationLeft..XF86_CD
+        keysyms::XF86_Calculater => NamedKey::LaunchApplication2, // Nice typo, libxkbcommon :)
+        // XF86_Clear
+        keysyms::XF86_Close => NamedKey::Close,
+        keysyms::XF86_Copy => NamedKey::Copy,
+        keysyms::XF86_Cut => NamedKey::Cut,
+        // XF86_Display..XF86_Documents
+        keysyms::XF86_Excel => NamedKey::LaunchSpreadsheet,
+        // XF86_Explorer..XF86iTouch
+        keysyms::XF86_LogOff => NamedKey::LogOff,
+        // XF86_Market..XF86_MenuPB
+        keysyms::XF86_MySites => NamedKey::BrowserFavorites,
+        keysyms::XF86_New => NamedKey::New,
+        // XF86_News..XF86_OfficeHome
+        keysyms::XF86_Open => NamedKey::Open,
+        // XF86_Option
+        keysyms::XF86_Paste => NamedKey::Paste,
+        keysyms::XF86_Phone => NamedKey::LaunchPhone,
+        // XF86_Q
+        keysyms::XF86_Reply => NamedKey::MailReply,
+        keysyms::XF86_Reload => NamedKey::BrowserRefresh,
+        // XF86_RotateWindows..XF86_RotationKB
+        keysyms::XF86_Save => NamedKey::Save,
+        // XF86_ScrollUp..XF86_ScrollClick
+        keysyms::XF86_Send => NamedKey::MailSend,
+        keysyms::XF86_Spell => NamedKey::SpellCheck,
+        keysyms::XF86_SplitScreen => NamedKey::SplitScreenToggle,
+        // XF86_Support..XF86_User2KB
+        keysyms::XF86_Video => NamedKey::LaunchMediaPlayer,
+        // XF86_WheelButton
+        keysyms::XF86_Word => NamedKey::LaunchWordProcessor,
+        // XF86_Xfer
+        keysyms::XF86_ZoomIn => NamedKey::ZoomIn,
+        keysyms::XF86_ZoomOut => NamedKey::ZoomOut,
 
-        // XKB_KEY_XF86Away..XKB_KEY_XF86Messenger
-        keysyms::XKB_KEY_XF86WebCam => Key::LaunchWebCam,
-        keysyms::XKB_KEY_XF86MailForward => Key::MailForward,
-        // XKB_KEY_XF86Pictures
-        keysyms::XKB_KEY_XF86Music => Key::LaunchMusicPlayer,
+        // XF86_Away..XF86_Messenger
+        keysyms::XF86_WebCam => NamedKey::LaunchWebCam,
+        keysyms::XF86_MailForward => NamedKey::MailForward,
+        // XF86_Pictures
+        keysyms::XF86_Music => NamedKey::LaunchMusicPlayer,
 
-        // XKB_KEY_XF86Battery..XKB_KEY_XF86UWB
+        // XF86_Battery..XF86_UWB
         //
-        keysyms::XKB_KEY_XF86AudioForward => Key::MediaFastForward,
-        // XKB_KEY_XF86AudioRepeat
-        keysyms::XKB_KEY_XF86AudioRandomPlay => Key::RandomToggle,
-        keysyms::XKB_KEY_XF86Subtitle => Key::Subtitle,
-        keysyms::XKB_KEY_XF86AudioCycleTrack => Key::MediaAudioTrack,
-        // XKB_KEY_XF86CycleAngle..XKB_KEY_XF86Blue
+        keysyms::XF86_AudioForward => NamedKey::MediaFastForward,
+        // XF86_AudioRepeat
+        keysyms::XF86_AudioRandomPlay => NamedKey::RandomToggle,
+        keysyms::XF86_Subtitle => NamedKey::Subtitle,
+        keysyms::XF86_AudioCycleTrack => NamedKey::MediaAudioTrack,
+        // XF86_CycleAngle..XF86_Blue
         //
-        keysyms::XKB_KEY_XF86Suspend => Key::Standby,
-        keysyms::XKB_KEY_XF86Hibernate => Key::Hibernate,
-        // XKB_KEY_XF86TouchpadToggle..XKB_KEY_XF86TouchpadOff
+        keysyms::XF86_Suspend => NamedKey::Standby,
+        keysyms::XF86_Hibernate => NamedKey::Hibernate,
+        // XF86_TouchpadToggle..XF86_TouchpadOff
         //
-        keysyms::XKB_KEY_XF86AudioMute => Key::AudioVolumeMute,
+        keysyms::XF86_AudioMute => NamedKey::AudioVolumeMute,
 
-        // XKB_KEY_XF86Switch_VT_1..XKB_KEY_XF86Switch_VT_12
+        // XF86_Switch_VT_1..XF86_Switch_VT_12
 
-        // XKB_KEY_XF86Ungrab..XKB_KEY_XF86ClearGrab
-        keysyms::XKB_KEY_XF86Next_VMode => Key::VideoModeNext,
-        // keysyms::XKB_KEY_XF86Prev_VMode => Key::VideoModePrevious,
-        // XKB_KEY_XF86LogWindowTree..XKB_KEY_XF86LogGrabInfo
+        // XF86_Ungrab..XF86_ClearGrab
+        keysyms::XF86_Next_VMode => NamedKey::VideoModeNext,
+        // keysyms::XF86_Prev_VMode => NamedKey::VideoModePrevious,
+        // XF86_LogWindowTree..XF86_LogGrabInfo
 
-        // XKB_KEY_SunFA_Grave..XKB_KEY_SunFA_Cedilla
+        // SunFA_Grave..SunFA_Cedilla
 
-        // keysyms::XKB_KEY_SunF36 => Key::F36 | Key::F11,
-        // keysyms::XKB_KEY_SunF37 => Key::F37 | Key::F12,
+        // keysyms::SunF36 => NamedKey::F36 | NamedKey::F11,
+        // keysyms::SunF37 => NamedKey::F37 | NamedKey::F12,
 
-        // keysyms::XKB_KEY_SunSys_Req => Key::PrintScreen,
-        // The next couple of xkb (until XKB_KEY_SunStop) are already handled.
-        // XKB_KEY_SunPrint_Screen..XKB_KEY_SunPageDown
+        // keysyms::SunSys_Req => NamedKey::PrintScreen,
+        // The next couple of xkb (until SunStop) are already handled.
+        // SunPrint_Screen..SunPageDown
 
-        // XKB_KEY_SunUndo..XKB_KEY_SunFront
-        keysyms::XKB_KEY_SunCopy => Key::Copy,
-        keysyms::XKB_KEY_SunOpen => Key::Open,
-        keysyms::XKB_KEY_SunPaste => Key::Paste,
-        keysyms::XKB_KEY_SunCut => Key::Cut,
+        // SunUndo..SunFront
+        keysyms::SUN_Copy => NamedKey::Copy,
+        keysyms::SUN_Open => NamedKey::Open,
+        keysyms::SUN_Paste => NamedKey::Paste,
+        keysyms::SUN_Cut => NamedKey::Cut,
 
-        // XKB_KEY_SunPowerSwitch
-        keysyms::XKB_KEY_SunAudioLowerVolume => Key::AudioVolumeDown,
-        keysyms::XKB_KEY_SunAudioMute => Key::AudioVolumeMute,
-        keysyms::XKB_KEY_SunAudioRaiseVolume => Key::AudioVolumeUp,
-        // XKB_KEY_SunVideoDegauss
-        keysyms::XKB_KEY_SunVideoLowerBrightness => Key::BrightnessDown,
-        keysyms::XKB_KEY_SunVideoRaiseBrightness => Key::BrightnessUp,
-        // XKB_KEY_SunPowerSwitchShift
+        // SunPowerSwitch
+        keysyms::SUN_AudioLowerVolume => NamedKey::AudioVolumeDown,
+        keysyms::SUN_AudioMute => NamedKey::AudioVolumeMute,
+        keysyms::SUN_AudioRaiseVolume => NamedKey::AudioVolumeUp,
+        // SUN_VideoDegauss
+        keysyms::SUN_VideoLowerBrightness => NamedKey::BrightnessDown,
+        keysyms::SUN_VideoRaiseBrightness => NamedKey::BrightnessUp,
+        // SunPowerSwitchShift
         //
-        0 => Key::Unidentified(NativeKey::Unidentified),
-        _ => Key::Unidentified(NativeKey::Xkb(keysym)),
-    }
+        0 => return Key::Unidentified(NativeKey::Unidentified),
+        _ => return Key::Unidentified(NativeKey::Xkb(keysym)),
+    })
 }
 
 pub fn keysym_location(keysym: u32) -> KeyLocation {
     use xkbcommon_dl::keysyms;
     match keysym {
-        keysyms::XKB_KEY_Shift_L
-        | keysyms::XKB_KEY_Control_L
-        | keysyms::XKB_KEY_Meta_L
-        | keysyms::XKB_KEY_Alt_L
-        | keysyms::XKB_KEY_Super_L
-        | keysyms::XKB_KEY_Hyper_L => KeyLocation::Left,
-        keysyms::XKB_KEY_Shift_R
-        | keysyms::XKB_KEY_Control_R
-        | keysyms::XKB_KEY_Meta_R
-        | keysyms::XKB_KEY_Alt_R
-        | keysyms::XKB_KEY_Super_R
-        | keysyms::XKB_KEY_Hyper_R => KeyLocation::Right,
-        keysyms::XKB_KEY_KP_0
-        | keysyms::XKB_KEY_KP_1
-        | keysyms::XKB_KEY_KP_2
-        | keysyms::XKB_KEY_KP_3
-        | keysyms::XKB_KEY_KP_4
-        | keysyms::XKB_KEY_KP_5
-        | keysyms::XKB_KEY_KP_6
-        | keysyms::XKB_KEY_KP_7
-        | keysyms::XKB_KEY_KP_8
-        | keysyms::XKB_KEY_KP_9
-        | keysyms::XKB_KEY_KP_Space
-        | keysyms::XKB_KEY_KP_Tab
-        | keysyms::XKB_KEY_KP_Enter
-        | keysyms::XKB_KEY_KP_F1
-        | keysyms::XKB_KEY_KP_F2
-        | keysyms::XKB_KEY_KP_F3
-        | keysyms::XKB_KEY_KP_F4
-        | keysyms::XKB_KEY_KP_Home
-        | keysyms::XKB_KEY_KP_Left
-        | keysyms::XKB_KEY_KP_Up
-        | keysyms::XKB_KEY_KP_Right
-        | keysyms::XKB_KEY_KP_Down
-        | keysyms::XKB_KEY_KP_Page_Up
-        | keysyms::XKB_KEY_KP_Page_Down
-        | keysyms::XKB_KEY_KP_End
-        | keysyms::XKB_KEY_KP_Begin
-        | keysyms::XKB_KEY_KP_Insert
-        | keysyms::XKB_KEY_KP_Delete
-        | keysyms::XKB_KEY_KP_Equal
-        | keysyms::XKB_KEY_KP_Multiply
-        | keysyms::XKB_KEY_KP_Add
-        | keysyms::XKB_KEY_KP_Separator
-        | keysyms::XKB_KEY_KP_Subtract
-        | keysyms::XKB_KEY_KP_Decimal
-        | keysyms::XKB_KEY_KP_Divide => KeyLocation::Numpad,
+        keysyms::Shift_L
+        | keysyms::Control_L
+        | keysyms::Meta_L
+        | keysyms::Alt_L
+        | keysyms::Super_L
+        | keysyms::Hyper_L => KeyLocation::Left,
+        keysyms::Shift_R
+        | keysyms::Control_R
+        | keysyms::Meta_R
+        | keysyms::Alt_R
+        | keysyms::Super_R
+        | keysyms::Hyper_R => KeyLocation::Right,
+        keysyms::KP_0
+        | keysyms::KP_1
+        | keysyms::KP_2
+        | keysyms::KP_3
+        | keysyms::KP_4
+        | keysyms::KP_5
+        | keysyms::KP_6
+        | keysyms::KP_7
+        | keysyms::KP_8
+        | keysyms::KP_9
+        | keysyms::KP_Space
+        | keysyms::KP_Tab
+        | keysyms::KP_Enter
+        | keysyms::KP_F1
+        | keysyms::KP_F2
+        | keysyms::KP_F3
+        | keysyms::KP_F4
+        | keysyms::KP_Home
+        | keysyms::KP_Left
+        | keysyms::KP_Up
+        | keysyms::KP_Right
+        | keysyms::KP_Down
+        | keysyms::KP_Page_Up
+        | keysyms::KP_Page_Down
+        | keysyms::KP_End
+        | keysyms::KP_Begin
+        | keysyms::KP_Insert
+        | keysyms::KP_Delete
+        | keysyms::KP_Equal
+        | keysyms::KP_Multiply
+        | keysyms::KP_Add
+        | keysyms::KP_Separator
+        | keysyms::KP_Subtract
+        | keysyms::KP_Decimal
+        | keysyms::KP_Divide => KeyLocation::Numpad,
         _ => KeyLocation::Standard,
     }
 }

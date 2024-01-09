@@ -10,13 +10,16 @@ pub(crate) use self::{
     event_loop::{
         EventLoop, EventLoopProxy, EventLoopWindowTarget, PlatformSpecificEventLoopAttributes,
     },
-    icon::WinIcon,
-    monitor::{MonitorHandle, VideoMode},
+    icon::{SelectedCursor, WinIcon},
+    keyboard::{physicalkey_to_scancode, scancode_to_physicalkey},
+    monitor::{MonitorHandle, VideoModeHandle},
     window::Window,
 };
 
+pub(crate) use self::icon::WinCursor as PlatformCustomCursor;
 pub use self::icon::WinIcon as PlatformIcon;
-pub(self) use crate::platform_impl::Fullscreen;
+pub(crate) use crate::cursor::OnlyCursorImageBuilder as PlatformCustomCursorBuilder;
+use crate::platform_impl::Fullscreen;
 
 use crate::event::DeviceId as RootDeviceId;
 use crate::icon::Icon;
@@ -30,6 +33,7 @@ pub struct PlatformSpecificWindowBuilderAttributes {
     pub no_redirection_bitmap: bool,
     pub drag_and_drop: bool,
     pub skip_taskbar: bool,
+    pub class_name: String,
     pub decoration_shadow: bool,
 }
 
@@ -42,6 +46,7 @@ impl Default for PlatformSpecificWindowBuilderAttributes {
             no_redirection_bitmap: false,
             drag_and_drop: true,
             skip_taskbar: false,
+            class_name: "Window Class".to_string(),
             decoration_shadow: false,
         }
     }
@@ -86,7 +91,7 @@ pub type OsError = std::io::Error;
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub struct KeyEventExtra {
-    pub text_with_all_modifers: Option<SmolStr>,
+    pub text_with_all_modifiers: Option<SmolStr>,
     pub key_without_modifiers: Key,
 }
 
@@ -152,21 +157,24 @@ const fn hiword(x: u32) -> u16 {
 #[inline(always)]
 unsafe fn get_window_long(hwnd: HWND, nindex: WINDOW_LONG_PTR_INDEX) -> isize {
     #[cfg(target_pointer_width = "64")]
-    return windows_sys::Win32::UI::WindowsAndMessaging::GetWindowLongPtrW(hwnd, nindex);
+    return unsafe { windows_sys::Win32::UI::WindowsAndMessaging::GetWindowLongPtrW(hwnd, nindex) };
     #[cfg(target_pointer_width = "32")]
-    return windows_sys::Win32::UI::WindowsAndMessaging::GetWindowLongW(hwnd, nindex) as isize;
+    return unsafe {
+        windows_sys::Win32::UI::WindowsAndMessaging::GetWindowLongW(hwnd, nindex) as isize
+    };
 }
 
 #[inline(always)]
 unsafe fn set_window_long(hwnd: HWND, nindex: WINDOW_LONG_PTR_INDEX, dwnewlong: isize) -> isize {
     #[cfg(target_pointer_width = "64")]
-    return windows_sys::Win32::UI::WindowsAndMessaging::SetWindowLongPtrW(hwnd, nindex, dwnewlong);
+    return unsafe {
+        windows_sys::Win32::UI::WindowsAndMessaging::SetWindowLongPtrW(hwnd, nindex, dwnewlong)
+    };
     #[cfg(target_pointer_width = "32")]
-    return windows_sys::Win32::UI::WindowsAndMessaging::SetWindowLongW(
-        hwnd,
-        nindex,
-        dwnewlong as i32,
-    ) as isize;
+    return unsafe {
+        windows_sys::Win32::UI::WindowsAndMessaging::SetWindowLongW(hwnd, nindex, dwnewlong as i32)
+            as isize
+    };
 }
 
 #[macro_use]

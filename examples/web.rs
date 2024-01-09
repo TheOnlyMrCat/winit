@@ -1,25 +1,27 @@
-#![allow(clippy::single_match)]
+#![allow(clippy::disallowed_methods, clippy::single_match)]
 
 use winit::{
-    event::{Event, WindowEvent},
+    event::{ElementState, Event, KeyEvent, WindowEvent},
     event_loop::EventLoop,
-    window::WindowBuilder,
+    keyboard::Key,
+    window::{Fullscreen, WindowBuilder},
 };
 
-pub fn main() {
-    let event_loop = EventLoop::new();
+pub fn main() -> Result<(), impl std::error::Error> {
+    let event_loop = EventLoop::new().unwrap();
 
-    let window = WindowBuilder::new()
-        .with_title("A fantastic window!")
-        .build(&event_loop)
-        .unwrap();
+    let builder = WindowBuilder::new().with_title("A fantastic window!");
+    #[cfg(wasm_platform)]
+    let builder = {
+        use winit::platform::web::WindowBuilderExtWebSys;
+        builder.with_append(true)
+    };
+    let window = builder.build(&event_loop).unwrap();
 
     #[cfg(wasm_platform)]
     let log_list = wasm::insert_canvas_and_create_log_list(&window);
 
-    event_loop.run(move |event, _, control_flow| {
-        control_flow.set_wait();
-
+    event_loop.run(move |event, elwt| {
         #[cfg(wasm_platform)]
         wasm::log_event(&log_list, &event);
 
@@ -27,40 +29,77 @@ pub fn main() {
             Event::WindowEvent {
                 event: WindowEvent::CloseRequested,
                 window_id,
-            } if window_id == window.id() => control_flow.set_exit(),
-            Event::MainEventsCleared => {
+            } if window_id == window.id() => elwt.exit(),
+            Event::AboutToWait => {
                 window.request_redraw();
+            }
+            Event::WindowEvent {
+                window_id,
+                event:
+                    WindowEvent::KeyboardInput {
+                        event:
+                            KeyEvent {
+                                logical_key: Key::Character(c),
+                                state: ElementState::Released,
+                                ..
+                            },
+                        ..
+                    },
+            } if window_id == window.id() && c == "f" => {
+                if window.fullscreen().is_some() {
+                    window.set_fullscreen(None);
+                } else {
+                    window.set_fullscreen(Some(Fullscreen::Borderless(None)));
+                }
             }
             _ => (),
         }
-    });
+    })
 }
 
 #[cfg(wasm_platform)]
 mod wasm {
+    use std::num::NonZeroU32;
+
+    use softbuffer::{Surface, SurfaceExtWeb};
     use wasm_bindgen::prelude::*;
-    use winit::{event::Event, window::Window};
+    use winit::{
+        event::{Event, WindowEvent},
+        window::Window,
+    };
 
     #[wasm_bindgen(start)]
     pub fn run() {
         console_log::init_with_level(log::Level::Debug).expect("error initializing logger");
 
         #[allow(clippy::main_recursion)]
-        super::main();
+        let _ = super::main();
     }
 
     pub fn insert_canvas_and_create_log_list(window: &Window) -> web_sys::Element {
         use winit::platform::web::WindowExtWebSys;
 
-        let canvas = window.canvas();
+        let canvas = window.canvas().unwrap();
+        let mut surface = Surface::from_canvas(canvas.clone()).unwrap();
+        surface
+            .resize(
+                NonZeroU32::new(canvas.width()).unwrap(),
+                NonZeroU32::new(canvas.height()).unwrap(),
+            )
+            .unwrap();
+        let mut buffer = surface.buffer_mut().unwrap();
+        buffer.fill(0xFFF0000);
+        buffer.present().unwrap();
 
         let window = web_sys::window().unwrap();
         let document = window.document().unwrap();
         let body = document.body().unwrap();
 
-        // Set a background color for the canvas to make it easier to tell where the canvas is for debugging purposes.
-        canvas.style().set_css_text("background-color: crimson;");
-        body.append_child(&canvas).unwrap();
+        let style = &canvas.style();
+        style.set_property("margin", "50px").unwrap();
+        // Use to test interactions with border and padding.
+        //style.set_property("border", "50px solid black").unwrap();
+        //style.set_property("padding", "50px").unwrap();
 
         let log_header = document.create_element("h2").unwrap();
         log_header.set_text_content(Some("Event Log"));
@@ -77,11 +116,29 @@ mod wasm {
         // Getting access to browser logs requires a lot of setup on mobile devices.
         // So we implement this basic logging system into the page to give developers an easy alternative.
         // As a bonus its also kind of handy on desktop.
-        if let Event::WindowEvent { event, .. } = &event {
+        let event = match event {
+            Event::WindowEvent {
+                event: WindowEvent::RedrawRequested,
+                ..
+            } => None,
+            Event::WindowEvent { event, .. } => Some(format!("{event:?}")),
+            Event::Resumed | Event::Suspended => Some(format!("{event:?}")),
+            _ => None,
+        };
+        if let Some(event) = event {
             let window = web_sys::window().unwrap();
             let document = window.document().unwrap();
             let log = document.create_element("li").unwrap();
-            log.set_text_content(Some(&format!("{event:?}")));
+
+            let date = js_sys::Date::new_0();
+            log.set_text_content(Some(&format!(
+                "{:02}:{:02}:{:02}.{:03}: {event}",
+                date.get_hours(),
+                date.get_minutes(),
+                date.get_seconds(),
+                date.get_milliseconds(),
+            )));
+
             log_list
                 .insert_before(&log, log_list.first_child().as_ref())
                 .unwrap();

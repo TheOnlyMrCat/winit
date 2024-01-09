@@ -2,9 +2,10 @@ use crate::{
     dpi::{PhysicalPosition, PhysicalSize, Size},
     icon::Icon,
     keyboard::ModifiersState,
-    platform_impl::platform::{event_loop, util, Fullscreen},
-    window::{CursorIcon, Theme, WindowAttributes},
+    platform_impl::platform::{event_loop, util, Fullscreen, SelectedCursor},
+    window::{Theme, WindowAttributes},
 };
+use bitflags::bitflags;
 use std::io;
 use std::sync::MutexGuard;
 use windows_sys::Win32::{
@@ -52,6 +53,9 @@ pub(crate) struct WindowState {
     pub is_active: bool,
     pub is_focused: bool,
 
+    // Flag whether redraw was requested.
+    pub redraw_requested: bool,
+
     pub dragging: bool,
 
     pub skip_taskbar: bool,
@@ -64,13 +68,14 @@ pub struct SavedWindow {
 
 #[derive(Clone)]
 pub struct MouseProperties {
-    pub cursor: CursorIcon,
+    pub(crate) selected_cursor: SelectedCursor,
     pub capture_count: u32,
     cursor_flags: CursorFlags,
     pub last_position: Option<PhysicalPosition<f64>>,
 }
 
 bitflags! {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
     pub struct CursorFlags: u8 {
         const GRABBED   = 1 << 0;
         const HIDDEN    = 1 << 1;
@@ -78,6 +83,7 @@ bitflags! {
     }
 }
 bitflags! {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
     pub struct WindowFlags: u32 {
         const RESIZABLE         = 1 << 0;
         const MINIMIZABLE       = 1 << 1;
@@ -118,7 +124,7 @@ bitflags! {
 
         const MARKER_ACTIVATE = 1 << 21;
 
-        const EXCLUSIVE_FULLSCREEN_OR_MASK = WindowFlags::ALWAYS_ON_TOP.bits;
+        const EXCLUSIVE_FULLSCREEN_OR_MASK = WindowFlags::ALWAYS_ON_TOP.bits();
     }
 }
 
@@ -138,7 +144,7 @@ impl WindowState {
     ) -> WindowState {
         WindowState {
             mouse: MouseProperties {
-                cursor: CursorIcon::default(),
+                selected_cursor: SelectedCursor::default(),
                 capture_count: 0,
                 cursor_flags: CursorFlags::empty(),
                 last_position: None,
@@ -164,6 +170,7 @@ impl WindowState {
 
             is_active: false,
             is_focused: false,
+            redraw_requested: false,
 
             dragging: false,
 

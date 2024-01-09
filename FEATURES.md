@@ -1,6 +1,6 @@
 # Winit Scope
 
-Winit aims to expose an interface that abstracts over window creation and input handling, and can
+Winit aims to expose an interface that abstracts over window creation and input handling and can
 be used to create both games and applications. It supports the following main graphical platforms:
 - Desktop
   - Windows 7+ (10+ is tested regularly)
@@ -13,7 +13,9 @@ be used to create both games and applications. It supports the following main gr
   - iOS
   - Android
 - Web
-  - via WASM
+  - Chrome
+  - Firefox
+  - Safari 13.1+
 
 Most platforms expose capabilities that cannot be meaningfully transposed onto others. Winit does not
 aim to support every single feature of every platform, but rather to abstract over the common features
@@ -43,10 +45,10 @@ be released and the library will enter maintenance mode. For the most part, new 
 be added past this point. New platform features may be accepted and exposed through point releases.
 
 ### Tier upgrades
-Some platform features could in theory be exposed across multiple platforms, but have not gone
+Some platform features could, in theory, be exposed across multiple platforms, but have not gone
 through the implementation work necessary to function on all platforms. When one of these features
 gets implemented across all platforms, a PR can be opened to upgrade the feature to a core feature.
-If that gets accepted, the platform-specific functions gets deprecated and become permanently
+If that gets accepted, the platform-specific functions get deprecated and become permanently
 exposed through the core, cross-platform API.
 
 # Features
@@ -86,7 +88,7 @@ If your PR makes notable changes to Winit's features, please update this section
 - **Fullscreen toggle**: The windows created by winit can be switched to and from fullscreen after
   creation.
 - **Exclusive fullscreen**: Winit allows changing the video mode of the monitor
-  for fullscreen windows, and if applicable, captures the monitor for exclusive
+  for fullscreen windows and, if applicable, captures the monitor for exclusive
   use by this application.
 - **HiDPI support**: Winit assists developers in appropriately scaling HiDPI content.
 - **Popup / modal windows**: Windows can be created relative to the client area of other windows, and parent
@@ -103,7 +105,8 @@ If your PR makes notable changes to Winit's features, please update this section
 - **Mouse set location**: Forcibly changing the location of the pointer.
 - **Cursor locking**: Locking the cursor inside the window so it cannot move.
 - **Cursor confining**: Confining the cursor to the window bounds so it cannot leave them.
-- **Cursor icon**: Changing the cursor icon, or hiding the cursor.
+- **Cursor icon**: Changing the cursor icon or hiding the cursor.
+- **Cursor image**: Changing the cursor to your own image.
 - **Cursor hittest**: Handle or ignore mouse events for a window.
 - **Touch events**: Single-touch events.
 - **Touch pressure**: Touch events contain information about the amount of force being applied.
@@ -117,6 +120,7 @@ If your PR makes notable changes to Winit's features, please update this section
 
 ## Platform
 ### Windows
+* Setting the name of the internal window class
 * Setting the taskbar icon
 * Setting the parent window
 * Setting a menu bar
@@ -143,20 +147,17 @@ If your PR makes notable changes to Winit's features, please update this section
 
 ### iOS
 * `winit` has a minimum OS requirement of iOS 8
-* Get the `UIWindow` object pointer
-* Get the `UIViewController` object pointer
-* Get the `UIView` object pointer
 * Get the `UIScreen` object pointer
 * Setting the `UIView` hidpi factor
 * Valid orientations
 * Home indicator visibility
-* Status bar visibility
-* Deferrring system gestures
+* Status bar visibility and style
+* Deferring system gestures
 * Getting the device idiom
 * Getting the preferred video mode
 
 ### Web
-* Get if systems preferred color scheme is "dark"
+* Get if the systems preferred color scheme is "dark"
 
 ## Usability
 * `serde`: Enables serialization/deserialization of certain types with Serde. (Maintainer: @Osspial)
@@ -166,13 +167,13 @@ If your PR makes notable changes to Winit's features, please update this section
 Legend:
 
 - ✔️: Works as intended
-- ▢: Mostly works but some bugs are known
+- ▢: Mostly works, but some bugs are known
 - ❌: Missing feature or large bugs making it unusable
 - **N/A**: Not applicable for this platform
 - ❓: Unknown status
 
 ### Windowing
-|Feature                          |Windows|MacOS   |Linux x11   |Linux Wayland  |Android|iOS    |WASM      |Redox OS|
+|Feature                          |Windows|MacOS   |Linux x11   |Linux Wayland  |Android|iOS    |Web      |Redox OS|
 |-------------------------------- | ----- | ----   | -------    | -----------   | ----- | ----- | -------- | ------ |
 |Window initialization            |✔️     |✔️     |▢[#5]      |✔️             |▢[#33]|▢[#33] |✔️        |✔️      |
 |Providing pointer to init OpenGL |✔️     |✔️     |✔️         |✔️             |✔️     |✔️    |**N/A**|✔️      |
@@ -182,6 +183,7 @@ Legend:
 |Window resizing                  |✔️     |✔️     |✔️         |✔️        |**N/A**|**N/A**|✔️        |✔️      |
 |Window resize increments         |❌     |✔️     |✔️         |❌             |**N/A**|**N/A**|**N/A**|**N/A** |
 |Window transparency              |✔️     |✔️     |✔️         |✔️             |**N/A**|**N/A**|N/A        |✔️      |
+|Window blur                      |❌    |❌    |❌        |✔️             |**N/A**|**N/A**|N/A        |❌     |
 |Window maximization              |✔️     |✔️     |✔️         |✔️             |**N/A**|**N/A**|**N/A**|**N/A** |
 |Window maximization toggle       |✔️     |✔️     |✔️         |✔️             |**N/A**|**N/A**|**N/A**|**N/A** |
 |Window minimization              |✔️     |✔️     |✔️         |✔️             |**N/A**|**N/A**|**N/A**|**N/A** |
@@ -192,20 +194,21 @@ Legend:
 |Popup windows                    |❌     |❌     |❌         |❌             |❌    |❌     |**N/A**|**N/A** |
 
 ### System information
-|Feature          |Windows|MacOS |Linux x11|Linux Wayland|Android|iOS      |WASM      |Redox OS|
+|Feature          |Windows|MacOS |Linux x11|Linux Wayland|Android|iOS      |Web      |Redox OS|
 |---------------- | ----- | ---- | ------- | ----------- | ----- | ------- | -------- | ------ |
 |Monitor list     |✔️    |✔️    |✔️       |✔️          |✔️     |✔️      |**N/A**|❌      |
 |Video mode query |✔️    |✔️    |✔️       |✔️          |✔️     |✔️      |**N/A**|❌      |
 
 ### Input handling
-|Feature                 |Windows   |MacOS   |Linux x11|Linux Wayland|Android|iOS    |WASM      |Redox OS|
+|Feature                 |Windows   |MacOS   |Linux x11|Linux Wayland|Android|iOS    |Web      |Redox OS|
 |----------------------- | -----    | ----   | ------- | ----------- | ----- | ----- | -------- | ------ |
 |Mouse events            |✔️       |▢[#63]  |✔️       |✔️          |**N/A**|**N/A**|✔️        |✔️      |
 |Mouse set location      |✔️       |✔️      |✔️       |✔️(when locked)  |**N/A**|**N/A**|**N/A**|**N/A** |
 |Cursor locking          |❌       |✔️      |❌       |✔️          |**N/A**|**N/A**|✔️        |❌      |
 |Cursor confining        |✔️       |❌      |✔️       |✔️          |**N/A**|**N/A**|❌       |❌      |
 |Cursor icon             |✔️       |✔️      |✔️       |✔️          |**N/A**|**N/A**|✔️        |**N/A** |
-|Cursor hittest          |✔️       |✔️      |❌       |✔️          |**N/A**|**N/A**|❌        |❌      |
+|Cursor image            |✔️       |✔️      |✔️       |✔️          |**N/A**|**N/A**|✔️        |**N/A** |
+|Cursor hittest          |✔️       |✔️      |✔️       |✔️          |**N/A**|**N/A**|❌        |❌      |
 |Touch events            |✔️       |❌      |✔️       |✔️          |✔️    |✔️     |✔️        |**N/A** |
 |Touch pressure          |✔️       |❌      |❌       |❌          |❌    |✔️     |✔️        |**N/A** |
 |Multitouch              |✔️       |❌      |✔️       |✔️          |✔️    |✔️     |❌        |**N/A** |
@@ -215,19 +218,19 @@ Legend:
 |Gamepad/Joystick events |❌[#804] |❌      |❌       |❌          |❌    |❌     |❓        |**N/A** |
 |Device movement events  |❓        |❓       |❓       |❓           |❌    |❌     |❓        |**N/A** |
 |Drag window with cursor |✔️       |✔️      |✔️       |✔️          |**N/A**|**N/A**|**N/A**   |**N/A** |
-|Resize with cursor      |❌         |❌       |✔️       |❌       |**N/A**|**N/A**|**N/A**   |**N/A** |
+|Resize with cursor      |✔️       |❌       |✔️       |✔️       |**N/A**|**N/A**|**N/A**   |**N/A** |
 
 ### Pending API Reworks
 Changes in the API that have been agreed upon but aren't implemented across all platforms.
 
-|Feature                             |Windows|MacOS |Linux x11|Linux Wayland|Android|iOS    |WASM      |Redox OS|
+|Feature                             |Windows|MacOS |Linux x11|Linux Wayland|Android|iOS    |Web      |Redox OS|
 |------------------------------      | ----- | ---- | ------- | ----------- | ----- | ----- | -------- | ------ |
 |New API for HiDPI ([#315] [#319])   |✔️      |✔️     |✔️        |✔️            |✔️      |✔️      |❓        |❓      |
 |Event Loop 2.0 ([#459])             |✔️      |✔️     |✔️        |✔️            |✔️      |✔️      |❓        |✔️       |
 |Keyboard Input 2.0 ([#753])         |✔️      |✔️     |✔️        |✔️            |✔️      |❌     |✔️         |✔️       |
 
 ### Completed API Reworks
-|Feature                             |Windows|MacOS |Linux x11|Linux Wayland|Android|iOS    |WASM      |Redox OS|
+|Feature                             |Windows|MacOS |Linux x11|Linux Wayland|Android|iOS    |Web      |Redox OS|
 |------------------------------      | ----- | ---- | ------- | ----------- | ----- | ----- | -------- | ------ |
 
 [#165]: https://github.com/rust-windowing/winit/issues/165

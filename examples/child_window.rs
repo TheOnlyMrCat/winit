@@ -1,12 +1,23 @@
-#[cfg(any(x11_platform, macos_platform, windows_platform))]
-fn main() {
+#[cfg(all(
+    feature = "rwh_06",
+    any(x11_platform, macos_platform, windows_platform)
+))]
+#[path = "util/fill.rs"]
+mod fill;
+
+#[cfg(all(
+    feature = "rwh_06",
+    any(x11_platform, macos_platform, windows_platform)
+))]
+#[allow(deprecated)]
+fn main() -> Result<(), impl std::error::Error> {
     use std::collections::HashMap;
 
-    use raw_window_handle::HasRawWindowHandle;
     use winit::{
         dpi::{LogicalPosition, LogicalSize, Position},
         event::{ElementState, Event, KeyEvent, WindowEvent},
-        event_loop::{ControlFlow, EventLoop, EventLoopWindowTarget},
+        event_loop::{EventLoop, EventLoopWindowTarget},
+        raw_window_handle::HasRawWindowHandle,
         window::{Window, WindowBuilder, WindowId},
     };
 
@@ -15,7 +26,7 @@ fn main() {
         event_loop: &EventLoopWindowTarget<()>,
         windows: &mut HashMap<WindowId, Window>,
     ) {
-        let parent = parent.raw_window_handle();
+        let parent = parent.raw_window_handle().unwrap();
         let mut builder = WindowBuilder::new()
             .with_title("child window")
             .with_inner_size(LogicalSize::new(200.0f32, 200.0f32))
@@ -32,7 +43,7 @@ fn main() {
 
     let mut windows = HashMap::new();
 
-    let event_loop: EventLoop<()> = EventLoop::new();
+    let event_loop: EventLoop<()> = EventLoop::new().unwrap();
     let parent_window = WindowBuilder::new()
         .with_title("parent window")
         .with_position(Position::Logical(LogicalPosition::new(0.0, 0.0)))
@@ -42,14 +53,12 @@ fn main() {
 
     println!("parent window: {parent_window:?})");
 
-    event_loop.run(move |event: Event<'_, ()>, event_loop, control_flow| {
-        *control_flow = ControlFlow::Wait;
-
+    event_loop.run(move |event: Event<()>, elwt| {
         if let Event::WindowEvent { event, window_id } = event {
             match event {
                 WindowEvent::CloseRequested => {
                     windows.clear();
-                    *control_flow = ControlFlow::Exit;
+                    elwt.exit();
                 }
                 WindowEvent::CursorEntered { device_id: _ } => {
                     // On x11, println when the cursor entered in a window even if the child window is created
@@ -66,7 +75,12 @@ fn main() {
                         },
                     ..
                 } => {
-                    spawn_child_window(&parent_window, event_loop, &mut windows);
+                    spawn_child_window(&parent_window, elwt, &mut windows);
+                }
+                WindowEvent::RedrawRequested => {
+                    if let Some(window) = windows.get(&window_id) {
+                        fill::fill_window(window);
+                    }
                 }
                 _ => (),
             }
@@ -74,7 +88,10 @@ fn main() {
     })
 }
 
-#[cfg(not(any(x11_platform, macos_platform, windows_platform)))]
+#[cfg(not(all(
+    feature = "rwh_06",
+    any(x11_platform, macos_platform, windows_platform)
+)))]
 fn main() {
-    panic!("This example is supported only on x11, macOS, and Windows.");
+    panic!("This example is supported only on x11, macOS, and Windows, with the `rwh_06` feature enabled.");
 }

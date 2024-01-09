@@ -6,21 +6,23 @@ use std::os::unix::ffi::OsStringExt;
 use std::ptr;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use once_cell::sync::Lazy;
 use smol_str::SmolStr;
 use xkbcommon_dl::{
-    self as ffi, xkb_state_component, XKBCOMMON_COMPOSE_HANDLE as XKBCH, XKBCOMMON_HANDLE as XKBH,
+    self as ffi, xkb_state_component, xkbcommon_compose_handle, xkbcommon_handle, XkbCommon,
+    XkbCommonCompose,
 };
 #[cfg(feature = "wayland")]
-use {memmap2::MmapOptions, wayland_backend::io_lifetimes::OwnedFd};
+use {memmap2::MmapOptions, std::os::unix::io::OwnedFd};
 #[cfg(feature = "x11")]
-use {x11_dl::xlib_xcb::xcb_connection_t, xkbcommon_dl::x11::XKBCOMMON_X11_HANDLE as XKBXH};
+use {x11_dl::xlib_xcb::xcb_connection_t, xkbcommon_dl::x11::xkbcommon_x11_handle};
 
 use crate::event::KeyEvent;
 use crate::platform_impl::common::keymap;
 use crate::platform_impl::KeyEventExtra;
 use crate::{
     event::ElementState,
-    keyboard::{Key, KeyCode, KeyLocation},
+    keyboard::{Key, KeyLocation, PhysicalKey},
 };
 
 // TODO: Wire this up without using a static `AtomicBool`.
@@ -30,6 +32,11 @@ static RESET_DEAD_KEYS: AtomicBool = AtomicBool::new(false);
 pub fn reset_dead_keys() {
     RESET_DEAD_KEYS.store(true, Ordering::SeqCst);
 }
+
+static XKBH: Lazy<&'static XkbCommon> = Lazy::new(xkbcommon_handle);
+static XKBCH: Lazy<&'static XkbCommonCompose> = Lazy::new(xkbcommon_compose_handle);
+#[cfg(feature = "x11")]
+static XKBXH: Lazy<&'static ffi::x11::XkbCommonX11> = Lazy::new(xkbcommon_x11_handle);
 
 #[derive(Debug)]
 pub struct KbdState {
@@ -154,7 +161,7 @@ impl KbdState {
     /// `xkb_state_key_get_utf8`.
     fn make_string_with<F>(&mut self, mut f: F) -> Option<SmolStr>
     where
-        F: FnMut(*mut i8, usize) -> i32,
+        F: FnMut(*mut c_char, usize) -> i32,
     {
         let size = f(ptr::null_mut(), 0);
         if size == 0 {
@@ -179,7 +186,7 @@ impl KbdState {
     }
 
     pub fn new() -> Result<Self, Error> {
-        if ffi::XKBCOMMON_OPTION.as_ref().is_none() {
+        if ffi::xkbcommon_option().is_none() {
             return Err(Error::XKBNotFound);
         }
 
@@ -243,37 +250,43 @@ impl KbdState {
             .unwrap_or_else(|| "C".into());
         let locale = CString::new(locale.into_vec()).unwrap();
 
-        let compose_table = (XKBCH.xkb_compose_table_new_from_locale)(
-            self.xkb_context,
-            locale.as_ptr(),
-            ffi::xkb_compose_compile_flags::XKB_COMPOSE_COMPILE_NO_FLAGS,
-        );
+        let compose_table = unsafe {
+            (XKBCH.xkb_compose_table_new_from_locale)(
+                self.xkb_context,
+                locale.as_ptr(),
+                ffi::xkb_compose_compile_flags::XKB_COMPOSE_COMPILE_NO_FLAGS,
+            )
+        };
 
         if compose_table.is_null() {
             // init of compose table failed, continue without compose
             return;
         }
 
-        let compose_state = (XKBCH.xkb_compose_state_new)(
-            compose_table,
-            ffi::xkb_compose_state_flags::XKB_COMPOSE_STATE_NO_FLAGS,
-        );
+        let compose_state = unsafe {
+            (XKBCH.xkb_compose_state_new)(
+                compose_table,
+                ffi::xkb_compose_state_flags::XKB_COMPOSE_STATE_NO_FLAGS,
+            )
+        };
 
         if compose_state.is_null() {
             // init of compose state failed, continue without compose
-            (XKBCH.xkb_compose_table_unref)(compose_table);
+            unsafe { (XKBCH.xkb_compose_table_unref)(compose_table) };
             return;
         }
 
-        let compose_state_2 = (XKBCH.xkb_compose_state_new)(
-            compose_table,
-            ffi::xkb_compose_state_flags::XKB_COMPOSE_STATE_NO_FLAGS,
-        );
+        let compose_state_2 = unsafe {
+            (XKBCH.xkb_compose_state_new)(
+                compose_table,
+                ffi::xkb_compose_state_flags::XKB_COMPOSE_STATE_NO_FLAGS,
+            )
+        };
 
         if compose_state_2.is_null() {
             // init of compose state failed, continue without compose
-            (XKBCH.xkb_compose_table_unref)(compose_table);
-            (XKBCH.xkb_compose_state_unref)(compose_state);
+            unsafe { (XKBCH.xkb_compose_table_unref)(compose_table) };
+            unsafe { (XKBCH.xkb_compose_state_unref)(compose_state) };
             return;
         }
 
@@ -289,65 +302,73 @@ impl KbdState {
     }
 
     unsafe fn de_init(&mut self) {
-        (XKBH.xkb_state_unref)(self.xkb_state);
+        unsafe { (XKBH.xkb_state_unref)(self.xkb_state) };
         self.xkb_state = ptr::null_mut();
-        (XKBH.xkb_keymap_unref)(self.xkb_keymap);
+        unsafe { (XKBH.xkb_keymap_unref)(self.xkb_keymap) };
         self.xkb_keymap = ptr::null_mut();
     }
 
     #[cfg(feature = "x11")]
     pub unsafe fn init_with_x11_keymap(&mut self) {
         if !self.xkb_keymap.is_null() {
-            self.de_init();
+            unsafe { self.de_init() };
         }
 
         // TODO: Support keyboards other than the "virtual core keyboard device".
-        self.core_keyboard_id = (XKBXH.xkb_x11_get_core_keyboard_device_id)(self.xcb_connection);
-        let keymap = (XKBXH.xkb_x11_keymap_new_from_device)(
-            self.xkb_context,
-            self.xcb_connection,
-            self.core_keyboard_id,
-            xkbcommon_dl::xkb_keymap_compile_flags::XKB_KEYMAP_COMPILE_NO_FLAGS,
-        );
+        self.core_keyboard_id =
+            unsafe { (XKBXH.xkb_x11_get_core_keyboard_device_id)(self.xcb_connection) };
+        let keymap = unsafe {
+            (XKBXH.xkb_x11_keymap_new_from_device)(
+                self.xkb_context,
+                self.xcb_connection,
+                self.core_keyboard_id,
+                xkbcommon_dl::xkb_keymap_compile_flags::XKB_KEYMAP_COMPILE_NO_FLAGS,
+            )
+        };
         if keymap.is_null() {
             panic!("Failed to get keymap from X11 server.");
         }
 
-        let state = (XKBXH.xkb_x11_state_new_from_device)(
-            keymap,
-            self.xcb_connection,
-            self.core_keyboard_id,
-        );
-        self.post_init(state, keymap);
+        let state = unsafe {
+            (XKBXH.xkb_x11_state_new_from_device)(
+                keymap,
+                self.xcb_connection,
+                self.core_keyboard_id,
+            )
+        };
+        unsafe { self.post_init(state, keymap) };
     }
 
     #[cfg(feature = "wayland")]
     pub unsafe fn init_with_fd(&mut self, fd: OwnedFd, size: usize) {
         if !self.xkb_keymap.is_null() {
-            self.de_init();
+            unsafe { self.de_init() };
         }
 
-        let map = MmapOptions::new()
-            .len(size)
-            .map_copy_read_only(&fd)
-            .unwrap();
+        let map = unsafe {
+            MmapOptions::new()
+                .len(size)
+                .map_copy_read_only(&fd)
+                .unwrap()
+        };
 
-        let keymap = (XKBH.xkb_keymap_new_from_string)(
-            self.xkb_context,
-            map.as_ptr() as *const _,
-            ffi::xkb_keymap_format::XKB_KEYMAP_FORMAT_TEXT_V1,
-            ffi::xkb_keymap_compile_flags::XKB_KEYMAP_COMPILE_NO_FLAGS,
-        );
+        let keymap = unsafe {
+            (XKBH.xkb_keymap_new_from_string)(
+                self.xkb_context,
+                map.as_ptr() as *const _,
+                ffi::xkb_keymap_format::XKB_KEYMAP_FORMAT_TEXT_V1,
+                ffi::xkb_keymap_compile_flags::XKB_KEYMAP_COMPILE_NO_FLAGS,
+            )
+        };
 
         if keymap.is_null() {
             panic!("Received invalid keymap from compositor.");
         }
 
-        let state = (XKBH.xkb_state_new)(keymap);
-        self.post_init(state, keymap);
+        let state = unsafe { (XKBH.xkb_state_new)(keymap) };
+        unsafe { self.post_init(state, keymap) };
     }
 
-    #[cfg(feature = "wayland")]
     pub fn key_repeats(&mut self, keycode: ffi::xkb_keycode_t) -> bool {
         unsafe { (XKBH.xkb_keymap_key_repeats)(self.xkb_keymap, keycode) == 1 }
     }
@@ -370,15 +391,15 @@ impl KbdState {
     ) -> KeyEvent {
         let mut event =
             KeyEventResults::new(self, keycode, !repeat && state == ElementState::Pressed);
-        let physical_key = event.keycode();
+        let physical_key = event.physical_key();
         let (logical_key, location) = event.key();
         let text = event.text();
         let (key_without_modifiers, _) = event.key_without_modifiers();
         let text_with_all_modifiers = event.text_with_all_modifiers();
 
         let platform_specific = KeyEventExtra {
-            key_without_modifiers,
             text_with_all_modifiers,
+            key_without_modifiers,
         };
 
         KeyEvent {
@@ -477,8 +498,8 @@ impl<'a> KeyEventResults<'a> {
         }
     }
 
-    fn keycode(&mut self) -> KeyCode {
-        keymap::raw_keycode_to_keycode(self.keycode)
+    fn physical_key(&mut self) -> PhysicalKey {
+        keymap::raw_keycode_to_physicalkey(self.keycode)
     }
 
     pub fn key(&mut self) -> (Key, KeyLocation) {
@@ -517,10 +538,12 @@ impl<'a> KeyEventResults<'a> {
         // This will become a pointer to an array which libxkbcommon owns, so we don't need to deallocate it.
         let mut keysyms = ptr::null();
         let keysym_count = unsafe {
+            let layout = (XKBH.xkb_state_key_get_layout)(self.state.xkb_state, self.keycode);
             (XKBH.xkb_keymap_key_get_syms_by_level)(
                 self.state.xkb_keymap,
                 self.keycode,
-                0,
+                layout,
+                // NOTE: The level should be zero to ignore modifiers.
                 0,
                 &mut keysyms,
             )
@@ -659,7 +682,7 @@ fn byte_slice_to_smol_str(bytes: &[u8]) -> Option<SmolStr> {
     std::str::from_utf8(bytes)
         .map(SmolStr::new)
         .map_err(|e| {
-            warn!(
+            log::warn!(
                 "UTF-8 received from libxkbcommon ({:?}) was invalid: {e}",
                 bytes
             )

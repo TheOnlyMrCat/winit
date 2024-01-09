@@ -3,11 +3,8 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use raw_window_handle::{
-    OrbitalDisplayHandle, OrbitalWindowHandle, RawDisplayHandle, RawWindowHandle,
-};
-
 use crate::{
+    cursor::Cursor,
     dpi::{PhysicalPosition, PhysicalSize, Position, Size},
     error,
     platform_impl::Fullscreen,
@@ -126,6 +123,14 @@ impl Window {
         })
     }
 
+    pub(crate) fn maybe_queue_on_main(&self, f: impl FnOnce(&Self) + Send + 'static) {
+        f(self)
+    }
+
+    pub(crate) fn maybe_wait_on_main<R: Send>(&self, f: impl FnOnce(&Self) -> R + Send) -> R {
+        f(self)
+    }
+
     #[inline]
     pub fn id(&self) -> WindowId {
         WindowId {
@@ -165,6 +170,9 @@ impl Window {
             self.wake_socket.wake().unwrap();
         }
     }
+
+    #[inline]
+    pub fn pre_present_notify(&self) {}
 
     #[inline]
     pub fn reset_dead_keys(&self) {
@@ -209,11 +217,12 @@ impl Window {
     }
 
     #[inline]
-    pub fn set_inner_size(&self, size: Size) {
+    pub fn request_inner_size(&self, size: Size) -> Option<PhysicalSize<u32>> {
         let (w, h): (u32, u32) = size.to_physical::<u32>(self.scale_factor()).into();
         self.window_socket
             .write(format!("S,{w},{h}").as_bytes())
             .expect("failed to set size");
+        None
     }
 
     #[inline]
@@ -248,6 +257,9 @@ impl Window {
 
     #[inline]
     pub fn set_transparent(&self, _transparent: bool) {}
+
+    #[inline]
+    pub fn set_blur(&self, _blur: bool) {}
 
     #[inline]
     pub fn set_visible(&self, _visibility: bool) {}
@@ -324,7 +336,7 @@ impl Window {
     pub fn set_window_icon(&self, _window_icon: Option<crate::icon::Icon>) {}
 
     #[inline]
-    pub fn set_ime_position(&self, _position: Position) {}
+    pub fn set_ime_cursor_area(&self, _position: Position, _size: Size) {}
 
     #[inline]
     pub fn set_ime_allowed(&self, _allowed: bool) {}
@@ -339,7 +351,7 @@ impl Window {
     pub fn request_user_attention(&self, _request_type: Option<window::UserAttentionType>) {}
 
     #[inline]
-    pub fn set_cursor_icon(&self, _: window::CursorIcon) {}
+    pub fn set_cursor(&self, _: Cursor) {}
 
     #[inline]
     pub fn set_cursor_position(&self, _: Position) -> Result<(), error::ExternalError> {
@@ -376,22 +388,55 @@ impl Window {
     }
 
     #[inline]
+    pub fn show_window_menu(&self, _position: Position) {}
+
+    #[inline]
     pub fn set_cursor_hittest(&self, _hittest: bool) -> Result<(), error::ExternalError> {
         Err(error::ExternalError::NotSupported(
             error::NotSupportedError::new(),
         ))
     }
 
+    #[cfg(feature = "rwh_04")]
     #[inline]
-    pub fn raw_window_handle(&self) -> RawWindowHandle {
-        let mut handle = OrbitalWindowHandle::empty();
+    pub fn raw_window_handle_rwh_04(&self) -> rwh_04::RawWindowHandle {
+        let mut handle = rwh_04::OrbitalHandle::empty();
         handle.window = self.window_socket.fd as *mut _;
-        RawWindowHandle::Orbital(handle)
+        rwh_04::RawWindowHandle::Orbital(handle)
     }
 
+    #[cfg(feature = "rwh_05")]
     #[inline]
-    pub fn raw_display_handle(&self) -> RawDisplayHandle {
-        RawDisplayHandle::Orbital(OrbitalDisplayHandle::empty())
+    pub fn raw_window_handle_rwh_05(&self) -> rwh_05::RawWindowHandle {
+        let mut handle = rwh_05::OrbitalWindowHandle::empty();
+        handle.window = self.window_socket.fd as *mut _;
+        rwh_05::RawWindowHandle::Orbital(handle)
+    }
+
+    #[cfg(feature = "rwh_05")]
+    #[inline]
+    pub fn raw_display_handle_rwh_05(&self) -> rwh_05::RawDisplayHandle {
+        rwh_05::RawDisplayHandle::Orbital(rwh_05::OrbitalDisplayHandle::empty())
+    }
+
+    #[cfg(feature = "rwh_06")]
+    #[inline]
+    pub fn raw_window_handle_rwh_06(&self) -> Result<rwh_06::RawWindowHandle, rwh_06::HandleError> {
+        let handle = rwh_06::OrbitalWindowHandle::new({
+            let window = self.window_socket.fd as *mut _;
+            std::ptr::NonNull::new(window).expect("orbital fd shoul never be null")
+        });
+        Ok(rwh_06::RawWindowHandle::Orbital(handle))
+    }
+
+    #[cfg(feature = "rwh_06")]
+    #[inline]
+    pub fn raw_display_handle_rwh_06(
+        &self,
+    ) -> Result<rwh_06::RawDisplayHandle, rwh_06::HandleError> {
+        Ok(rwh_06::RawDisplayHandle::Orbital(
+            rwh_06::OrbitalDisplayHandle::new(),
+        ))
     }
 
     #[inline]
@@ -414,6 +459,8 @@ impl Window {
 
     #[inline]
     pub fn set_theme(&self, _theme: Option<window::Theme>) {}
+
+    pub fn set_content_protected(&self, _protected: bool) {}
 }
 
 impl Drop for Window {

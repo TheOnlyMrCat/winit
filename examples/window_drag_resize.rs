@@ -3,16 +3,19 @@
 use simple_logger::SimpleLogger;
 use winit::{
     event::{ElementState, Event, KeyEvent, MouseButton, StartCause, WindowEvent},
-    event_loop::{ControlFlow, EventLoop},
+    event_loop::EventLoop,
     keyboard::Key,
     window::{CursorIcon, ResizeDirection, WindowBuilder},
 };
 
 const BORDER: f64 = 8.0;
 
-fn main() {
+#[path = "util/fill.rs"]
+mod fill;
+
+fn main() -> Result<(), impl std::error::Error> {
     SimpleLogger::new().init().unwrap();
-    let event_loop = EventLoop::new();
+    let event_loop = EventLoop::new().unwrap();
 
     let window = WindowBuilder::new()
         .with_inner_size(winit::dpi::LogicalSize::new(600.0, 400.0))
@@ -24,12 +27,12 @@ fn main() {
     let mut border = false;
     let mut cursor_location = None;
 
-    event_loop.run(move |event, _, control_flow| match event {
+    event_loop.run(move |event, elwt| match event {
         Event::NewEvents(StartCause::Init) => {
             eprintln!("Press 'B' to toggle borderless")
         }
         Event::WindowEvent { event, .. } => match event {
-            WindowEvent::CloseRequested => *control_flow = ControlFlow::Exit,
+            WindowEvent::CloseRequested => elwt.exit(),
             WindowEvent::CursorMoved { position, .. } => {
                 if !window.is_decorated() {
                     let new_location =
@@ -37,7 +40,7 @@ fn main() {
 
                     if new_location != cursor_location {
                         cursor_location = new_location;
-                        window.set_cursor_icon(cursor_direction_icon(cursor_location))
+                        window.set_cursor(cursor_direction_icon(cursor_location))
                     }
                 }
             }
@@ -49,6 +52,8 @@ fn main() {
             } => {
                 if let Some(dir) = cursor_location {
                     let _res = window.drag_resize_window(dir);
+                } else if !window.is_decorated() {
+                    let _res = window.drag_window();
                 }
             }
             WindowEvent::KeyboardInput {
@@ -63,10 +68,14 @@ fn main() {
                 border = !border;
                 window.set_decorations(border);
             }
+            WindowEvent::RedrawRequested => {
+                fill::fill_window(&window);
+            }
             _ => (),
         },
+
         _ => (),
-    });
+    })
 }
 
 fn cursor_direction_icon(resize_direction: Option<ResizeDirection>) -> CursorIcon {

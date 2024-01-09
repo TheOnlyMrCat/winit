@@ -1,163 +1,135 @@
 #![allow(clippy::unnecessary_cast)]
-
+use std::cell::Cell;
 use std::ptr;
 
-use objc2::declare::{Ivar, IvarDrop};
-use objc2::foundation::{NSArray, NSObject, NSSize, NSString};
-use objc2::rc::{autoreleasepool, Id, Shared};
-use objc2::runtime::Object;
-use objc2::{class, declare_class, msg_send, msg_send_id, sel, ClassType};
+use icrate::AppKit::{
+    NSApplicationPresentationFullScreen, NSApplicationPresentationHideDock,
+    NSApplicationPresentationHideMenuBar, NSApplicationPresentationOptions, NSDraggingDestination,
+    NSFilenamesPboardType, NSPasteboard, NSWindowDelegate, NSWindowOcclusionStateVisible,
+};
+use icrate::Foundation::{
+    MainThreadMarker, NSArray, NSObject, NSObjectProtocol, NSPoint, NSSize, NSString,
+};
+use objc2::rc::{autoreleasepool, Id};
+use objc2::runtime::{AnyObject, ProtocolObject};
+use objc2::{
+    class, declare_class, msg_send, msg_send_id, mutability, sel, ClassType, DeclaredClass,
+};
 
-use super::appkit::{
-    NSApplicationPresentationOptions, NSFilenamesPboardType, NSPasteboard, NSWindowOcclusionState,
+use super::monitor::flip_window_screen_coordinates;
+use super::{
+    app_state::AppState,
+    window::{get_ns_theme, WinitWindow},
+    Fullscreen,
 };
 use crate::{
     dpi::{LogicalPosition, LogicalSize},
     event::{Event, WindowEvent},
-    keyboard::ModifiersState,
-    platform_impl::platform::{
-        app_state::AppState,
-        event::{EventProxy, EventWrapper},
-        util,
-        window::{get_ns_theme, WinitWindow},
-        Fullscreen,
-    },
     window::WindowId,
 };
 
+#[derive(Debug)]
+pub(crate) struct State {
+    window: Id<WinitWindow>,
+
+    // This is set when WindowBuilder::with_fullscreen was set,
+    // see comments of `window_did_fail_to_enter_fullscreen`
+    initial_fullscreen: Cell<bool>,
+
+    // During `windowDidResize`, we use this to only send Moved if the position changed.
+    //
+    // This is expressed in native screen coordinates.
+    previous_position: Cell<Option<NSPoint>>,
+
+    // Used to prevent redundant events.
+    previous_scale_factor: Cell<f64>,
+}
+
 declare_class!(
-    #[derive(Debug)]
-    pub(crate) struct WinitWindowDelegate {
-        window: IvarDrop<Id<WinitWindow, Shared>>,
-
-        // TODO: It's possible for delegate methods to be called asynchronously,
-        // causing data races / `RefCell` panics.
-
-        // This is set when WindowBuilder::with_fullscreen was set,
-        // see comments of `window_did_fail_to_enter_fullscreen`
-        initial_fullscreen: bool,
-
-        // During `windowDidResize`, we use this to only send Moved if the position changed.
-        // TODO: Remove unnecessary boxing here
-        previous_position: IvarDrop<Option<Box<(f64, f64)>>>,
-
-        // Used to prevent redundant events.
-        previous_scale_factor: f64,
-    }
+    pub(crate) struct WinitWindowDelegate;
 
     unsafe impl ClassType for WinitWindowDelegate {
         type Super = NSObject;
+        type Mutability = mutability::MainThreadOnly;
+        const NAME: &'static str = "WinitWindowDelegate";
     }
 
-    unsafe impl WinitWindowDelegate {
-        #[sel(initWithWindow:initialFullscreen:)]
-        fn init_with_winit(
-            &mut self,
-            window: &WinitWindow,
-            initial_fullscreen: bool,
-        ) -> Option<&mut Self> {
-            let this: Option<&mut Self> = unsafe { msg_send![self, init] };
-            this.map(|this| {
-                let scale_factor = window.scale_factor();
-
-                Ivar::write(&mut this.window, window.retain());
-                Ivar::write(&mut this.initial_fullscreen, initial_fullscreen);
-                Ivar::write(&mut this.previous_position, None);
-                Ivar::write(&mut this.previous_scale_factor, scale_factor);
-
-                if scale_factor != 1.0 {
-                    this.queue_static_scale_factor_changed_event();
-                }
-                this.window.setDelegate(Some(this));
-
-                // Enable theme change event
-                let notification_center: Id<Object, Shared> =
-                    unsafe { msg_send_id![class!(NSDistributedNotificationCenter), defaultCenter] };
-                let notification_name =
-                    NSString::from_str("AppleInterfaceThemeChangedNotification");
-                let _: () = unsafe {
-                    msg_send![
-                        &notification_center,
-                        addObserver: &*this
-                        selector: sel!(effectiveAppearanceDidChange:)
-                        name: &*notification_name
-                        object: ptr::null::<Object>()
-                    ]
-                };
-
-                this
-            })
-        }
+    impl DeclaredClass for WinitWindowDelegate {
+        type Ivars = State;
     }
 
-    // NSWindowDelegate + NSDraggingDestination protocols
-    unsafe impl WinitWindowDelegate {
-        #[sel(windowShouldClose:)]
-        fn window_should_close(&self, _: Option<&Object>) -> bool {
+    unsafe impl NSObjectProtocol for WinitWindowDelegate {}
+
+    unsafe impl NSWindowDelegate for WinitWindowDelegate {
+        #[method(windowShouldClose:)]
+        fn window_should_close(&self, _: Option<&AnyObject>) -> bool {
             trace_scope!("windowShouldClose:");
             self.queue_event(WindowEvent::CloseRequested);
             false
         }
 
-        #[sel(windowWillClose:)]
-        fn window_will_close(&self, _: Option<&Object>) {
+        #[method(windowWillClose:)]
+        fn window_will_close(&self, _: Option<&AnyObject>) {
             trace_scope!("windowWillClose:");
             // `setDelegate:` retains the previous value and then autoreleases it
             autoreleasepool(|_| {
                 // Since El Capitan, we need to be careful that delegate methods can't
                 // be called after the window closes.
-                self.window.setDelegate(None);
+                self.ivars().window.setDelegate(None);
             });
             self.queue_event(WindowEvent::Destroyed);
         }
 
-        #[sel(windowDidResize:)]
-        fn window_did_resize(&mut self, _: Option<&Object>) {
+        #[method(windowDidResize:)]
+        fn window_did_resize(&self, _: Option<&AnyObject>) {
             trace_scope!("windowDidResize:");
             // NOTE: WindowEvent::Resized is reported in frameDidChange.
             self.emit_move_event();
         }
 
-        #[sel(windowWillStartLiveResize:)]
-        fn window_will_start_live_resize(&mut self, _: Option<&Object>) {
+        #[method(windowWillStartLiveResize:)]
+        fn window_will_start_live_resize(&self, _: Option<&AnyObject>) {
             trace_scope!("windowWillStartLiveResize:");
 
             let increments = self
+                .ivars()
                 .window
                 .lock_shared_state("window_will_enter_fullscreen")
                 .resize_increments;
-            self.window.set_resize_increments_inner(increments);
+            self.ivars().window.set_resize_increments_inner(increments);
         }
 
-        #[sel(windowDidEndLiveResize:)]
-        fn window_did_end_live_resize(&mut self, _: Option<&Object>) {
+        #[method(windowDidEndLiveResize:)]
+        fn window_did_end_live_resize(&self, _: Option<&AnyObject>) {
             trace_scope!("windowDidEndLiveResize:");
-            self.window.set_resize_increments_inner(NSSize::new(1., 1.));
+            self.ivars()
+                .window
+                .set_resize_increments_inner(NSSize::new(1., 1.));
         }
 
         // This won't be triggered if the move was part of a resize.
-        #[sel(windowDidMove:)]
-        fn window_did_move(&mut self, _: Option<&Object>) {
+        #[method(windowDidMove:)]
+        fn window_did_move(&self, _: Option<&AnyObject>) {
             trace_scope!("windowDidMove:");
             self.emit_move_event();
         }
 
-        #[sel(windowDidChangeBackingProperties:)]
-        fn window_did_change_backing_properties(&mut self, _: Option<&Object>) {
+        #[method(windowDidChangeBackingProperties:)]
+        fn window_did_change_backing_properties(&self, _: Option<&AnyObject>) {
             trace_scope!("windowDidChangeBackingProperties:");
             self.queue_static_scale_factor_changed_event();
         }
 
-        #[sel(windowDidBecomeKey:)]
-        fn window_did_become_key(&self, _: Option<&Object>) {
+        #[method(windowDidBecomeKey:)]
+        fn window_did_become_key(&self, _: Option<&AnyObject>) {
             trace_scope!("windowDidBecomeKey:");
             // TODO: center the cursor if the window had mouse grab when it
             // lost focus
             self.queue_event(WindowEvent::Focused(true));
         }
 
-        #[sel(windowDidResignKey:)]
-        fn window_did_resign_key(&self, _: Option<&Object>) {
+        #[method(windowDidResignKey:)]
+        fn window_did_resign_key(&self, _: Option<&AnyObject>) {
             trace_scope!("windowDidResignKey:");
             // It happens rather often, e.g. when the user is Cmd+Tabbing, that the
             // NSWindowDelegate will receive a didResignKey event despite no event
@@ -166,88 +138,21 @@ declare_class!(
             // NSWindowDelegate, and as a result a tracked modifiers state can quite
             // easily fall out of synchrony with reality.  This requires us to emit
             // a synthetic ModifiersChanged event when we lose focus.
-
-            // TODO(madsmtm): Remove the need for this unsafety
-            let mut view = unsafe { Id::from_shared(self.window.view()) };
-
-            // Both update the state and emit a ModifiersChanged event.
-            if !view.state.modifiers.state().is_empty() {
-                view.state.modifiers = ModifiersState::empty().into();
-                self.queue_event(WindowEvent::ModifiersChanged(
-                    ModifiersState::empty().into(),
-                ));
-            }
+            self.ivars().window.view().reset_modifiers();
 
             self.queue_event(WindowEvent::Focused(false));
         }
 
-        /// Invoked when the dragged image enters destination bounds or frame
-        #[sel(draggingEntered:)]
-        fn dragging_entered(&self, sender: *mut Object) -> bool {
-            trace_scope!("draggingEntered:");
-
-            use std::path::PathBuf;
-
-            let pb: Id<NSPasteboard, Shared> = unsafe { msg_send_id![sender, draggingPasteboard] };
-            let filenames = pb.propertyListForType(unsafe { NSFilenamesPboardType });
-            let filenames: Id<NSArray<NSString>, Shared> = unsafe { Id::cast(filenames) };
-
-            filenames.into_iter().for_each(|file| {
-                let path = PathBuf::from(file.to_string());
-                self.queue_event(WindowEvent::HoveredFile(path));
-            });
-
-            true
-        }
-
-        /// Invoked when the image is released
-        #[sel(prepareForDragOperation:)]
-        fn prepare_for_drag_operation(&self, _: Option<&Object>) -> bool {
-            trace_scope!("prepareForDragOperation:");
-            true
-        }
-
-        /// Invoked after the released image has been removed from the screen
-        #[sel(performDragOperation:)]
-        fn perform_drag_operation(&self, sender: *mut Object) -> bool {
-            trace_scope!("performDragOperation:");
-
-            use std::path::PathBuf;
-
-            let pb: Id<NSPasteboard, Shared> = unsafe { msg_send_id![sender, draggingPasteboard] };
-            let filenames = pb.propertyListForType(unsafe { NSFilenamesPboardType });
-            let filenames: Id<NSArray<NSString>, Shared> = unsafe { Id::cast(filenames) };
-
-            filenames.into_iter().for_each(|file| {
-                let path = PathBuf::from(file.to_string());
-                self.queue_event(WindowEvent::DroppedFile(path));
-            });
-
-            true
-        }
-
-        /// Invoked when the dragging operation is complete
-        #[sel(concludeDragOperation:)]
-        fn conclude_drag_operation(&self, _: Option<&Object>) {
-            trace_scope!("concludeDragOperation:");
-        }
-
-        /// Invoked when the dragging operation is cancelled
-        #[sel(draggingExited:)]
-        fn dragging_exited(&self, _: Option<&Object>) {
-            trace_scope!("draggingExited:");
-            self.queue_event(WindowEvent::HoveredFileCancelled);
-        }
-
         /// Invoked when before enter fullscreen
-        #[sel(windowWillEnterFullScreen:)]
-        fn window_will_enter_fullscreen(&self, _: Option<&Object>) {
+        #[method(windowWillEnterFullScreen:)]
+        fn window_will_enter_fullscreen(&self, _: Option<&AnyObject>) {
             trace_scope!("windowWillEnterFullScreen:");
 
             let mut shared_state = self
+                .ivars()
                 .window
                 .lock_shared_state("window_will_enter_fullscreen");
-            shared_state.maximized = self.window.is_zoomed();
+            shared_state.maximized = self.ivars().window.is_zoomed();
             let fullscreen = shared_state.fullscreen.as_ref();
             match fullscreen {
                 // Exclusive mode sets the state in `set_fullscreen` as the user
@@ -261,7 +166,7 @@ declare_class!(
                 // Otherwise, we must've reached fullscreen by the user clicking
                 // on the green fullscreen button. Update state!
                 None => {
-                    let current_monitor = self.window.current_monitor_inner();
+                    let current_monitor = self.ivars().window.current_monitor_inner();
                     shared_state.fullscreen = Some(Fullscreen::Borderless(current_monitor))
                 }
             }
@@ -269,18 +174,21 @@ declare_class!(
         }
 
         /// Invoked when before exit fullscreen
-        #[sel(windowWillExitFullScreen:)]
-        fn window_will_exit_fullscreen(&self, _: Option<&Object>) {
+        #[method(windowWillExitFullScreen:)]
+        fn window_will_exit_fullscreen(&self, _: Option<&AnyObject>) {
             trace_scope!("windowWillExitFullScreen:");
 
-            let mut shared_state = self.window.lock_shared_state("window_will_exit_fullscreen");
+            let mut shared_state = self
+                .ivars()
+                .window
+                .lock_shared_state("window_will_exit_fullscreen");
             shared_state.in_fullscreen_transition = true;
         }
 
-        #[sel(window:willUseFullScreenPresentationOptions:)]
+        #[method(window:willUseFullScreenPresentationOptions:)]
         fn window_will_use_fullscreen_presentation_options(
             &self,
-            _: Option<&Object>,
+            _: Option<&AnyObject>,
             proposed_options: NSApplicationPresentationOptions,
         ) -> NSApplicationPresentationOptions {
             trace_scope!("window:willUseFullScreenPresentationOptions:");
@@ -294,43 +202,50 @@ declare_class!(
             // user-provided options are ignored in exclusive fullscreen.
             let mut options = proposed_options;
             let shared_state = self
+                .ivars()
                 .window
                 .lock_shared_state("window_will_use_fullscreen_presentation_options");
             if let Some(Fullscreen::Exclusive(_)) = shared_state.fullscreen {
-                options = NSApplicationPresentationOptions::NSApplicationPresentationFullScreen
-                    | NSApplicationPresentationOptions::NSApplicationPresentationHideDock
-                    | NSApplicationPresentationOptions::NSApplicationPresentationHideMenuBar;
+                options = NSApplicationPresentationFullScreen
+                    | NSApplicationPresentationHideDock
+                    | NSApplicationPresentationHideMenuBar;
             }
 
             options
         }
 
         /// Invoked when entered fullscreen
-        #[sel(windowDidEnterFullScreen:)]
-        fn window_did_enter_fullscreen(&mut self, _: Option<&Object>) {
+        #[method(windowDidEnterFullScreen:)]
+        fn window_did_enter_fullscreen(&self, _: Option<&AnyObject>) {
             trace_scope!("windowDidEnterFullScreen:");
-            *self.initial_fullscreen = false;
-            let mut shared_state = self.window.lock_shared_state("window_did_enter_fullscreen");
+            self.ivars().initial_fullscreen.set(false);
+            let mut shared_state = self
+                .ivars()
+                .window
+                .lock_shared_state("window_did_enter_fullscreen");
             shared_state.in_fullscreen_transition = false;
             let target_fullscreen = shared_state.target_fullscreen.take();
             drop(shared_state);
             if let Some(target_fullscreen) = target_fullscreen {
-                self.window.set_fullscreen(target_fullscreen);
+                self.ivars().window.set_fullscreen(target_fullscreen);
             }
         }
 
         /// Invoked when exited fullscreen
-        #[sel(windowDidExitFullScreen:)]
-        fn window_did_exit_fullscreen(&self, _: Option<&Object>) {
+        #[method(windowDidExitFullScreen:)]
+        fn window_did_exit_fullscreen(&self, _: Option<&AnyObject>) {
             trace_scope!("windowDidExitFullScreen:");
 
-            self.window.restore_state_from_fullscreen();
-            let mut shared_state = self.window.lock_shared_state("window_did_exit_fullscreen");
+            self.ivars().window.restore_state_from_fullscreen();
+            let mut shared_state = self
+                .ivars()
+                .window
+                .lock_shared_state("window_did_exit_fullscreen");
             shared_state.in_fullscreen_transition = false;
             let target_fullscreen = shared_state.target_fullscreen.take();
             drop(shared_state);
             if let Some(target_fullscreen) = target_fullscreen {
-                self.window.set_fullscreen(target_fullscreen);
+                self.ivars().window.set_fullscreen(target_fullscreen);
             }
         }
 
@@ -350,44 +265,123 @@ declare_class!(
         /// due to being in the midst of handling some other animation or user gesture.
         /// This method indicates that there was an error, and you should clean up any
         /// work you may have done to prepare to enter full-screen mode.
-        #[sel(windowDidFailToEnterFullScreen:)]
-        fn window_did_fail_to_enter_fullscreen(&self, _: Option<&Object>) {
+        #[method(windowDidFailToEnterFullScreen:)]
+        fn window_did_fail_to_enter_fullscreen(&self, _: Option<&AnyObject>) {
             trace_scope!("windowDidFailToEnterFullScreen:");
             let mut shared_state = self
+                .ivars()
                 .window
                 .lock_shared_state("window_did_fail_to_enter_fullscreen");
             shared_state.in_fullscreen_transition = false;
             shared_state.target_fullscreen = None;
-            if *self.initial_fullscreen {
+            if self.ivars().initial_fullscreen.get() {
                 #[allow(clippy::let_unit_value)]
                 unsafe {
                     let _: () = msg_send![
-                        &*self.window,
+                        &*self.ivars().window,
                         performSelector: sel!(toggleFullScreen:),
-                        withObject: ptr::null::<Object>(),
+                        withObject: ptr::null::<AnyObject>(),
                         afterDelay: 0.5,
                     ];
                 };
             } else {
-                self.window.restore_state_from_fullscreen();
+                self.ivars().window.restore_state_from_fullscreen();
             }
         }
 
         // Invoked when the occlusion state of the window changes
-        #[sel(windowDidChangeOcclusionState:)]
-        fn window_did_change_occlusion_state(&self, _: Option<&Object>) {
+        #[method(windowDidChangeOcclusionState:)]
+        fn window_did_change_occlusion_state(&self, _: Option<&AnyObject>) {
             trace_scope!("windowDidChangeOcclusionState:");
-            self.queue_event(WindowEvent::Occluded(
-                !self
-                    .window
-                    .occlusionState()
-                    .contains(NSWindowOcclusionState::NSWindowOcclusionStateVisible),
-            ))
+            let visible = self.ivars().window.occlusionState() & NSWindowOcclusionStateVisible
+                == NSWindowOcclusionStateVisible;
+            self.queue_event(WindowEvent::Occluded(!visible));
         }
 
+        #[method(windowDidChangeScreen:)]
+        fn window_did_change_screen(&self, _: Option<&AnyObject>) {
+            trace_scope!("windowDidChangeScreen:");
+            let is_simple_fullscreen = self
+                .ivars()
+                .window
+                .lock_shared_state("window_did_change_screen")
+                .is_simple_fullscreen;
+            if is_simple_fullscreen {
+                if let Some(screen) = self.ivars().window.screen() {
+                    self.ivars().window.setFrame_display(screen.frame(), true);
+                }
+            }
+        }
+    }
+
+    unsafe impl NSDraggingDestination for WinitWindowDelegate {
+        /// Invoked when the dragged image enters destination bounds or frame
+        #[method(draggingEntered:)]
+        fn dragging_entered(&self, sender: &NSObject) -> bool {
+            trace_scope!("draggingEntered:");
+
+            use std::path::PathBuf;
+
+            let pb: Id<NSPasteboard> = unsafe { msg_send_id![sender, draggingPasteboard] };
+            let filenames = pb
+                .propertyListForType(unsafe { NSFilenamesPboardType })
+                .unwrap();
+            let filenames: Id<NSArray<NSString>> = unsafe { Id::cast(filenames) };
+
+            filenames.into_iter().for_each(|file| {
+                let path = PathBuf::from(file.to_string());
+                self.queue_event(WindowEvent::HoveredFile(path));
+            });
+
+            true
+        }
+
+        /// Invoked when the image is released
+        #[method(prepareForDragOperation:)]
+        fn prepare_for_drag_operation(&self, _sender: &NSObject) -> bool {
+            trace_scope!("prepareForDragOperation:");
+            true
+        }
+
+        /// Invoked after the released image has been removed from the screen
+        #[method(performDragOperation:)]
+        fn perform_drag_operation(&self, sender: &NSObject) -> bool {
+            trace_scope!("performDragOperation:");
+
+            use std::path::PathBuf;
+
+            let pb: Id<NSPasteboard> = unsafe { msg_send_id![sender, draggingPasteboard] };
+            let filenames = pb
+                .propertyListForType(unsafe { NSFilenamesPboardType })
+                .unwrap();
+            let filenames: Id<NSArray<NSString>> = unsafe { Id::cast(filenames) };
+
+            filenames.into_iter().for_each(|file| {
+                let path = PathBuf::from(file.to_string());
+                self.queue_event(WindowEvent::DroppedFile(path));
+            });
+
+            true
+        }
+
+        /// Invoked when the dragging operation is complete
+        #[method(concludeDragOperation:)]
+        fn conclude_drag_operation(&self, _sender: Option<&NSObject>) {
+            trace_scope!("concludeDragOperation:");
+        }
+
+        /// Invoked when the dragging operation is cancelled
+        #[method(draggingExited:)]
+        fn dragging_exited(&self, _sender: Option<&NSObject>) {
+            trace_scope!("draggingExited:");
+            self.queue_event(WindowEvent::HoveredFileCancelled);
+        }
+    }
+
+    unsafe impl WinitWindowDelegate {
         // Observe theme change
-        #[sel(effectiveAppearanceDidChange:)]
-        fn effective_appearance_did_change(&self, sender: Option<&Object>) {
+        #[method(effectiveAppearanceDidChange:)]
+        fn effective_appearance_did_change(&self, sender: Option<&AnyObject>) {
             trace_scope!("Triggered `effectiveAppearanceDidChange:`");
             unsafe {
                 msg_send![
@@ -399,10 +393,12 @@ declare_class!(
             }
         }
 
-        #[sel(effectiveAppearanceDidChangedOnMainThread:)]
-        fn effective_appearance_did_changed_on_main_thread(&self, _: Option<&Object>) {
-            let theme = get_ns_theme();
+        #[method(effectiveAppearanceDidChangedOnMainThread:)]
+        fn effective_appearance_did_changed_on_main_thread(&self, _: Option<&AnyObject>) {
+            let mtm = MainThreadMarker::from(self);
+            let theme = get_ns_theme(mtm);
             let mut shared_state = self
+                .ivars()
                 .window
                 .lock_shared_state("effective_appearance_did_change");
             let current_theme = shared_state.current_theme;
@@ -412,71 +408,79 @@ declare_class!(
                 self.queue_event(WindowEvent::ThemeChanged(theme));
             }
         }
-
-        #[sel(windowDidChangeScreen:)]
-        fn window_did_change_screen(&self, _: Option<&Object>) {
-            trace_scope!("windowDidChangeScreen:");
-            let is_simple_fullscreen = self
-                .window
-                .lock_shared_state("window_did_change_screen")
-                .is_simple_fullscreen;
-            if is_simple_fullscreen {
-                if let Some(screen) = self.window.screen() {
-                    self.window.setFrame_display(screen.frame(), true);
-                }
-            }
-        }
     }
 );
 
 impl WinitWindowDelegate {
-    pub fn new(window: &WinitWindow, initial_fullscreen: bool) -> Id<Self, Shared> {
-        unsafe {
-            msg_send_id![
-                msg_send_id![Self::class(), alloc],
-                initWithWindow: window,
-                initialFullscreen: initial_fullscreen,
-            ]
+    pub fn new(window: &WinitWindow, initial_fullscreen: bool) -> Id<Self> {
+        let mtm = MainThreadMarker::from(window);
+        let scale_factor = window.scale_factor();
+        let this = mtm.alloc().set_ivars(State {
+            window: window.retain(),
+            initial_fullscreen: Cell::new(initial_fullscreen),
+            previous_position: Cell::new(None),
+            previous_scale_factor: Cell::new(scale_factor),
+        });
+        let this: Id<Self> = unsafe { msg_send_id![super(this), init] };
+
+        if scale_factor != 1.0 {
+            this.queue_static_scale_factor_changed_event();
         }
+        window.setDelegate(Some(ProtocolObject::from_ref(&*this)));
+
+        // Enable theme change event
+        let notification_center: Id<AnyObject> =
+            unsafe { msg_send_id![class!(NSDistributedNotificationCenter), defaultCenter] };
+        let notification_name = NSString::from_str("AppleInterfaceThemeChangedNotification");
+        let _: () = unsafe {
+            msg_send![
+                &notification_center,
+                addObserver: &*this
+                selector: sel!(effectiveAppearanceDidChange:)
+                name: &*notification_name
+                object: ptr::null::<AnyObject>()
+            ]
+        };
+
+        this
     }
 
-    pub(crate) fn queue_event(&self, event: WindowEvent<'static>) {
+    pub(crate) fn queue_event(&self, event: WindowEvent) {
         let event = Event::WindowEvent {
-            window_id: WindowId(self.window.id()),
+            window_id: WindowId(self.ivars().window.id()),
             event,
         };
-        AppState::queue_event(EventWrapper::StaticEvent(event));
+        AppState::queue_event(event);
     }
 
-    fn queue_static_scale_factor_changed_event(&mut self) {
-        let scale_factor = self.window.scale_factor();
-        if scale_factor == *self.previous_scale_factor {
+    fn queue_static_scale_factor_changed_event(&self) {
+        let window = &self.ivars().window;
+        let scale_factor = window.scale_factor();
+        if scale_factor == self.ivars().previous_scale_factor.get() {
             return;
         };
 
-        *self.previous_scale_factor = scale_factor;
-        let wrapper = EventWrapper::EventProxy(EventProxy::DpiChangedProxy {
-            window: self.window.clone(),
-            suggested_size: self.view_size(),
+        self.ivars().previous_scale_factor.set(scale_factor);
+        let content_size = window.contentRectForFrameRect(window.frame()).size;
+        let content_size = LogicalSize::new(content_size.width, content_size.height);
+        AppState::queue_static_scale_factor_changed_event(
+            window.clone(),
+            content_size.to_physical(scale_factor),
             scale_factor,
-        });
-        AppState::queue_event(wrapper);
+        );
     }
 
-    fn emit_move_event(&mut self) {
-        let rect = self.window.frame();
-        let x = rect.origin.x as f64;
-        let y = util::bottom_left_to_top_left(rect);
-        if self.previous_position.as_deref() != Some(&(x, y)) {
-            *self.previous_position = Some(Box::new((x, y)));
-            let scale_factor = self.window.scale_factor();
-            let physical_pos = LogicalPosition::<f64>::from((x, y)).to_physical(scale_factor);
-            self.queue_event(WindowEvent::Moved(physical_pos));
+    fn emit_move_event(&self) {
+        let window = &self.ivars().window;
+        let frame = window.frame();
+        if self.ivars().previous_position.get() == Some(frame.origin) {
+            return;
         }
-    }
+        self.ivars().previous_position.set(Some(frame.origin));
 
-    fn view_size(&self) -> LogicalSize<f64> {
-        let size = self.window.contentView().frame().size;
-        LogicalSize::new(size.width as f64, size.height as f64)
+        let position = flip_window_screen_coordinates(frame);
+        let position =
+            LogicalPosition::new(position.x, position.y).to_physical(window.scale_factor());
+        self.queue_event(WindowEvent::Moved(position));
     }
 }

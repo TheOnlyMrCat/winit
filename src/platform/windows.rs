@@ -2,12 +2,9 @@ use std::{ffi::c_void, path::Path};
 
 use crate::{
     dpi::PhysicalSize,
-    event::{DeviceId, KeyEvent},
+    event::DeviceId,
     event_loop::EventLoopBuilder,
-    keyboard::Key,
     monitor::MonitorHandle,
-    platform::modifier_supplement::KeyEventExtModifierSupplement,
-    platform_impl::WinIcon,
     window::{BadIcon, Icon, Window, WindowBuilder},
 };
 
@@ -17,8 +14,6 @@ pub type HWND = isize;
 pub type HMENU = isize;
 /// Monitor Handle type used by Win32 API
 pub type HMONITOR = isize;
-/// Instance Handle type used by Win32 API
-pub type HINSTANCE = isize;
 
 /// Additional methods on `EventLoop` that are specific to Windows.
 pub trait EventLoopBuilderExtWindows {
@@ -113,13 +108,6 @@ impl<T> EventLoopBuilderExtWindows for EventLoopBuilder<T> {
 
 /// Additional methods on `Window` that are specific to Windows.
 pub trait WindowExtWindows {
-    /// Returns the HINSTANCE of the window
-    fn hinstance(&self) -> HINSTANCE;
-    /// Returns the native handle that is used by this window.
-    ///
-    /// The pointer will become invalid when the native window was destroyed.
-    fn hwnd(&self) -> HWND;
-
     /// Enables or disables mouse and keyboard input to the specified window.
     ///
     /// A window must be enabled before it can be activated.
@@ -149,16 +137,6 @@ pub trait WindowExtWindows {
 
 impl WindowExtWindows for Window {
     #[inline]
-    fn hinstance(&self) -> HINSTANCE {
-        self.window.hinstance()
-    }
-
-    #[inline]
-    fn hwnd(&self) -> HWND {
-        self.window.hwnd()
-    }
-
-    #[inline]
     fn set_enable(&self, enabled: bool) {
         self.window.set_enable(enabled)
     }
@@ -180,6 +158,7 @@ impl WindowExtWindows for Window {
 }
 
 /// Additional methods on `WindowBuilder` that are specific to Windows.
+#[allow(rustdoc::broken_intra_doc_links)]
 pub trait WindowBuilderExtWindows {
     /// Set an owner to the window to be created. Can be used to create a dialog box, for example.
     /// This only works when [`WindowBuilder::with_parent_window`] isn't called or set to `None`.
@@ -192,7 +171,7 @@ pub trait WindowBuilderExtWindows {
     /// - An owned window is hidden when its owner is minimized.
     ///
     /// For more information, see <https://docs.microsoft.com/en-us/windows/win32/winmsg/window-features#owned-windows>
-    fn with_owner_window(self, parent: HWND) -> WindowBuilder;
+    fn with_owner_window(self, parent: HWND) -> Self;
 
     /// Sets a menu on the window to be created.
     ///
@@ -203,14 +182,21 @@ pub trait WindowBuilderExtWindows {
     /// Note: Dark mode cannot be supported for win32 menus, it's simply not possible to change how the menus look.
     /// If you use this, it is recommended that you combine it with `with_theme(Some(Theme::Light))` to avoid a jarring effect.
     ///
-    /// [`CreateMenu`]: windows_sys::Win32::UI::WindowsAndMessaging::CreateMenu
-    fn with_menu(self, menu: HMENU) -> WindowBuilder;
+    #[cfg_attr(
+        platform_windows,
+        doc = "[`CreateMenu`]: windows_sys::Win32::UI::WindowsAndMessaging::CreateMenu"
+    )]
+    #[cfg_attr(
+        not(platform_windows),
+        doc = "[`CreateMenu`]: #only-available-on-windows"
+    )]
+    fn with_menu(self, menu: HMENU) -> Self;
 
     /// This sets `ICON_BIG`. A good ceiling here is 256x256.
-    fn with_taskbar_icon(self, taskbar_icon: Option<Icon>) -> WindowBuilder;
+    fn with_taskbar_icon(self, taskbar_icon: Option<Icon>) -> Self;
 
     /// This sets `WS_EX_NOREDIRECTIONBITMAP`.
-    fn with_no_redirection_bitmap(self, flag: bool) -> WindowBuilder;
+    fn with_no_redirection_bitmap(self, flag: bool) -> Self;
 
     /// Enables or disables drag and drop support (enabled by default). Will interfere with other crates
     /// that use multi-threaded COM API (`CoInitializeEx` with `COINIT_MULTITHREADED` instead of
@@ -218,57 +204,66 @@ pub trait WindowBuilderExtWindows {
     /// COM API regardless of this option. Currently only fullscreen mode does that, but there may be more in the future.
     /// If you need COM API with `COINIT_MULTITHREADED` you must initialize it before calling any winit functions.
     /// See <https://docs.microsoft.com/en-us/windows/win32/api/objbase/nf-objbase-coinitialize#remarks> for more information.
-    fn with_drag_and_drop(self, flag: bool) -> WindowBuilder;
+    fn with_drag_and_drop(self, flag: bool) -> Self;
 
     /// Whether show or hide the window icon in the taskbar.
-    fn with_skip_taskbar(self, skip: bool) -> WindowBuilder;
+    fn with_skip_taskbar(self, skip: bool) -> Self;
+
+    /// Customize the window class name.
+    fn with_class_name<S: Into<String>>(self, class_name: S) -> Self;
 
     /// Shows or hides the background drop shadow for undecorated windows.
     ///
     /// The shadow is hidden by default.
     /// Enabling the shadow causes a thin 1px line to appear on the top of the window.
-    fn with_undecorated_shadow(self, shadow: bool) -> WindowBuilder;
+    fn with_undecorated_shadow(self, shadow: bool) -> Self;
 }
 
 impl WindowBuilderExtWindows for WindowBuilder {
     #[inline]
-    fn with_owner_window(mut self, parent: HWND) -> WindowBuilder {
+    fn with_owner_window(mut self, parent: HWND) -> Self {
         self.platform_specific.owner = Some(parent);
         self
     }
 
     #[inline]
-    fn with_menu(mut self, menu: HMENU) -> WindowBuilder {
+    fn with_menu(mut self, menu: HMENU) -> Self {
         self.platform_specific.menu = Some(menu);
         self
     }
 
     #[inline]
-    fn with_taskbar_icon(mut self, taskbar_icon: Option<Icon>) -> WindowBuilder {
+    fn with_taskbar_icon(mut self, taskbar_icon: Option<Icon>) -> Self {
         self.platform_specific.taskbar_icon = taskbar_icon;
         self
     }
 
     #[inline]
-    fn with_no_redirection_bitmap(mut self, flag: bool) -> WindowBuilder {
+    fn with_no_redirection_bitmap(mut self, flag: bool) -> Self {
         self.platform_specific.no_redirection_bitmap = flag;
         self
     }
 
     #[inline]
-    fn with_drag_and_drop(mut self, flag: bool) -> WindowBuilder {
+    fn with_drag_and_drop(mut self, flag: bool) -> Self {
         self.platform_specific.drag_and_drop = flag;
         self
     }
 
     #[inline]
-    fn with_skip_taskbar(mut self, skip: bool) -> WindowBuilder {
+    fn with_skip_taskbar(mut self, skip: bool) -> Self {
         self.platform_specific.skip_taskbar = skip;
         self
     }
 
     #[inline]
-    fn with_undecorated_shadow(mut self, shadow: bool) -> WindowBuilder {
+    fn with_class_name<S: Into<String>>(mut self, class_name: S) -> Self {
+        self.platform_specific.class_name = class_name.into();
+        self
+    }
+
+    #[inline]
+    fn with_undecorated_shadow(mut self, shadow: bool) -> Self {
         self.platform_specific.decoration_shadow = shadow;
         self
     }
@@ -337,27 +332,12 @@ impl IconExtWindows for Icon {
         path: P,
         size: Option<PhysicalSize<u32>>,
     ) -> Result<Self, BadIcon> {
-        let win_icon = WinIcon::from_path(path, size)?;
+        let win_icon = crate::platform_impl::WinIcon::from_path(path, size)?;
         Ok(Icon { inner: win_icon })
     }
 
     fn from_resource(ordinal: u16, size: Option<PhysicalSize<u32>>) -> Result<Self, BadIcon> {
-        let win_icon = WinIcon::from_resource(ordinal, size)?;
+        let win_icon = crate::platform_impl::WinIcon::from_resource(ordinal, size)?;
         Ok(Icon { inner: win_icon })
-    }
-}
-
-impl KeyEventExtModifierSupplement for KeyEvent {
-    #[inline]
-    fn text_with_all_modifiers(&self) -> Option<&str> {
-        self.platform_specific
-            .text_with_all_modifers
-            .as_ref()
-            .map(|s| s.as_str())
-    }
-
-    #[inline]
-    fn key_without_modifiers(&self) -> Key {
-        self.platform_specific.key_without_modifiers.clone()
     }
 }

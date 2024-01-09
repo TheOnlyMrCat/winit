@@ -4,7 +4,7 @@
 use winit::{
     dpi::LogicalSize,
     event::{ElementState, Event, WindowEvent},
-    event_loop::{ControlFlow, EventLoop},
+    event_loop::EventLoop,
     keyboard::{Key, ModifiersState},
     // WARNING: This is not available on all platforms (for example on the web).
     platform::modifier_supplement::KeyEventExtModifierSupplement,
@@ -17,23 +17,24 @@ fn main() {
 }
 
 #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
-fn main() {
-    simple_logger::SimpleLogger::new().init().unwrap();
-    let event_loop = EventLoop::new();
+fn main() -> Result<(), impl std::error::Error> {
+    #[path = "util/fill.rs"]
+    mod fill;
 
-    let _window = WindowBuilder::new()
+    simple_logger::SimpleLogger::new().init().unwrap();
+    let event_loop = EventLoop::new().unwrap();
+
+    let window = WindowBuilder::new()
         .with_inner_size(LogicalSize::new(400.0, 200.0))
         .build(&event_loop)
         .unwrap();
 
     let mut modifiers = ModifiersState::default();
 
-    event_loop.run(move |event, _, control_flow| {
-        *control_flow = ControlFlow::Wait;
-
-        match event {
-            Event::WindowEvent { event, .. } => match event {
-                WindowEvent::CloseRequested => *control_flow = ControlFlow::Exit,
+    event_loop.run(move |event, elwt| {
+        if let Event::WindowEvent { event, .. } = event {
+            match event {
+                WindowEvent::CloseRequested => elwt.exit(),
                 WindowEvent::ModifiersChanged(new) => {
                     modifiers = new.state();
                 }
@@ -51,9 +52,11 @@ fn main() {
                         }
                     }
                 }
+                WindowEvent::RedrawRequested => {
+                    fill::fill_window(&window);
+                }
                 _ => (),
-            },
-            _ => (),
+            }
         };
-    });
+    })
 }

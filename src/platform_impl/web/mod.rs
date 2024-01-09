@@ -17,10 +17,13 @@
 // incoming events (from the registered handlers) and ensuring they are passed to the user in a
 // compliant way.
 
+mod r#async;
+mod cursor;
 mod device;
 mod error;
 mod event_loop;
 mod keyboard;
+mod main_thread;
 mod monitor;
 mod window;
 
@@ -32,15 +35,11 @@ pub use self::error::OsError;
 pub(crate) use self::event_loop::{
     EventLoop, EventLoopProxy, EventLoopWindowTarget, PlatformSpecificEventLoopAttributes,
 };
-pub use self::monitor::{MonitorHandle, VideoMode};
+pub use self::monitor::{MonitorHandle, VideoModeHandle};
 pub use self::window::{PlatformSpecificWindowBuilderAttributes, Window, WindowId};
 
 pub(crate) use self::keyboard::KeyEventExtra;
 pub(crate) use crate::icon::NoIcon as PlatformIcon;
-pub(self) use crate::platform_impl::Fullscreen;
-
-#[derive(Clone, Copy)]
-pub(crate) struct ScaleChangeArgs {
-    old_scale: f64,
-    new_scale: f64,
-}
+pub(crate) use crate::platform_impl::Fullscreen;
+pub(crate) use cursor::CustomCursor as PlatformCustomCursor;
+pub(crate) use cursor::CustomCursorBuilder as PlatformCustomCursorBuilder;
